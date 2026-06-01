@@ -64,14 +64,53 @@ fn ensure_dir(file_path: &str) -> CflowResult<()> {
     fs::create_dir_all(dir).map_err(|error| error.to_string())
 }
 
-fn read_json(file_path: &str) -> CflowResult<Value> {
-    if !Path::new(file_path).exists() {
-        return Err(format!("Input file not found: {file_path}"));
-    }
-
-    let content = fs::read_to_string(file_path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&content).map_err(|error| format!("Invalid JSON in {file_path}: {error}"))
+fn read_json_input(args: &[String]) -> CflowResult<Value> {
+    let input_opt = args.iter().position(|arg| arg == "--input").and_then(|idx| args.get(idx + 1));
+    let content = if let Some(input_file) = input_opt {
+        if !Path::new(input_file).exists() {
+            return Err(format!("Input file not found: {}", input_file));
+        }
+        fs::read_to_string(input_file).map_err(|error| error.to_string())?
+    } else {
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer).map_err(|error| error.to_string())?;
+        if buffer.trim().is_empty() {
+            return Err("No input provided via stdin. Use --input or pipe JSON.".to_string());
+        }
+        buffer
+    };
+    serde_json::from_str(&content).map_err(|error| format!("Invalid JSON: {}", error))
 }
+
+fn slugify(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn resolve_task(args: &[String]) -> CflowResult<String> {
+    let task = get_arg(args, "--task", "current");
+    if task == "current" {
+        if !Path::new(".coding/current").exists() {
+            return Err("No current task. Run `cflow new \"<task-name>\"` first.".to_string());
+        }
+        let current_task = fs::read_to_string(".coding/current").map_err(|e| e.to_string())?;
+        let current_task = current_task.trim();
+        Ok(format!(".coding/{}", current_task))
+    } else if task.starts_with(".coding/tasks/") {
+        Ok(task)
+    } else {
+        Ok(format!(".coding/tasks/{}", task))
+    }
+}
+
 
 fn write_text(file_path: &str, content: &str) -> CflowResult<()> {
     ensure_dir(file_path)?;
@@ -421,13 +460,40 @@ where
     }
 }
 
+fn command_new(args: &[String]) -> CflowResult<()> {
+    let name = args.first().cloned().unwrap_or_default();
+    if name.is_empty() {
+        return Err("Missing task name. Usage: cflow new \"<task-name>\"".to_string());
+    }
+    
+    let now = chrono::Local::now();
+    let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
+    let slug = slugify(&name);
+    let task_id = if slug.is_empty() { timestamp.clone() } else { format!("{}-{}", timestamp, slug) };
+    
+    let task_path = format!("tasks/{}", task_id);
+    let full_path = format!(".coding/{}", task_path);
+    
+    ensure_dir(&format!("{}/.placeholder", full_path))?;
+    
+    write_text(".coding/current", &task_path)?;
+    
+    println!("Task created: {}", task_id);
+    println!("Path: {}", full_path);
+    
+    Ok(())
+}
+
 fn command_request(args: &[String]) -> CflowResult<()> {
-    let input = get_arg(args, "--input", ".coding/request.json");
-    let output = get_arg(args, "--output", ".coding/REQUEST.md");
-    let data = read_json(&input)?;
+    let task_path = resolve_task(args)?;
+    if !Path::new(&task_path).exists() {
+        return Err(format!("Task folder does not exist: {}", task_path));
+    }
+    let output = format!("{}/REQUEST.md", task_path);
+    let data = read_json_input(args)?;
     validate_request(&data)?;
     write_text(&output, &render_request(&data))?;
-    println!("created {output}");
+    println!("created {}", output);
     println!(
         "next_action={}",
         option_to_js_string(get_path(&data, &["next_action"]))
@@ -436,22 +502,28 @@ fn command_request(args: &[String]) -> CflowResult<()> {
 }
 
 fn command_plan(args: &[String]) -> CflowResult<()> {
-    let input = get_arg(args, "--input", ".coding/plan.json");
-    let output = get_arg(args, "--output", ".coding/PLAN.md");
-    let data = read_json(&input)?;
+    let task_path = resolve_task(args)?;
+    if !Path::new(&task_path).exists() {
+        return Err(format!("Task folder does not exist: {}", task_path));
+    }
+    let output = format!("{}/PLAN.md", task_path);
+    let data = read_json_input(args)?;
     validate_plan(&data)?;
     write_text(&output, &render_plan(&data))?;
-    println!("created {output}");
+    println!("created {}", output);
     Ok(())
 }
 
 fn command_verify(args: &[String]) -> CflowResult<()> {
-    let input = get_arg(args, "--input", ".coding/verify.json");
-    let output = get_arg(args, "--output", ".coding/VERIFY.md");
-    let data = read_json(&input)?;
+    let task_path = resolve_task(args)?;
+    if !Path::new(&task_path).exists() {
+        return Err(format!("Task folder does not exist: {}", task_path));
+    }
+    let output = format!("{}/VERIFY.md", task_path);
+    let data = read_json_input(args)?;
     validate_verify(&data)?;
     write_text(&output, &render_verify(&data))?;
-    println!("created {output}");
+    println!("created {}", output);
     println!(
         "status={}",
         option_to_js_string(get_path(&data, &["status"]))
@@ -460,12 +532,19 @@ fn command_verify(args: &[String]) -> CflowResult<()> {
 }
 
 fn command_ship(args: &[String]) -> CflowResult<()> {
-    let input = get_arg(args, "--input", ".coding/ship.json");
-    let output = get_arg(args, "--output", ".coding/SHIP.md");
-    let data = read_json(&input)?;
+    let task_path = resolve_task(args)?;
+    if !Path::new(&task_path).exists() {
+        return Err(format!("Task folder does not exist: {}", task_path));
+    }
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    if !Path::new(&verify_path).exists() {
+        return Err("Ship rejected: VERIFY.md chưa tồn tại trong task folder".to_string());
+    }
+    let output = format!("{}/SHIP.md", task_path);
+    let data = read_json_input(args)?;
     validate_ship(&data)?;
     write_text(&output, &render_ship(&data))?;
-    println!("created {output}");
+    println!("created {}", output);
 
     if has_flag(args, "--dry-run") {
         if is_git_repo() {
@@ -516,26 +595,43 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
 }
 
 fn command_status() {
-    let files = [
-        ".coding/REQUEST.md",
-        ".coding/PLAN.md",
-        ".coding/VERIFY.md",
-        ".coding/SHIP.md",
-    ];
-
+    if !Path::new(".coding/current").exists() {
+        println!("No current task. Run `cflow new \"<task-name>\"` first.");
+        return;
+    }
+    
+    let current_task = fs::read_to_string(".coding/current").unwrap_or_default();
+    let current_task = current_task.trim();
+    let task_id = current_task.strip_prefix("tasks/").unwrap_or(current_task);
+    
+    println!("Current task: {}", task_id);
+    println!("Path: .coding/{}", current_task);
+    println!("Artifacts:");
+    
+    let files = ["REQUEST.md", "PLAN.md", "VERIFY.md", "SHIP.md"];
     for file in files {
-        let marker = if Path::new(file).exists() {
-            "\u{2713}"
-        } else {
-            "\u{00b7}"
-        };
-        println!("{marker} {file}");
+        let file_path = format!(".coding/{}/{}", current_task, file);
+        let status = if Path::new(&file_path).exists() { "exists" } else { "missing" };
+        println!("- {}: {}", file, status);
     }
 }
 
+
 fn print_usage() {
     println!(
-        "Usage:\n  cflow request --input .coding/request.json [--output .coding/REQUEST.md]\n  cflow plan    --input .coding/plan.json    [--output .coding/PLAN.md]\n  cflow verify  --input .coding/verify.json  [--output .coding/VERIFY.md]\n  cflow ship    --input .coding/ship.json    [--output .coding/SHIP.md] [--dry-run|--commit]\n  cflow status\n\nExamples:\n  cflow request --input examples/request.json\n  cflow plan --input examples/plan.json\n  cflow verify --input examples/verify.json\n  cflow ship --input examples/ship.json --dry-run\n"
+        "Usage:
+  cflow new \"<task-name>\"
+  cflow request [--task current] [--input file]
+  cflow plan    [--task current] [--input file]
+  cflow verify  [--task current] [--input file]
+  cflow ship    [--task current] [--input file] [--dry-run|--commit]
+  cflow status
+
+Examples:
+  cflow new \"focus garden\"
+  cat request.json | cflow request
+  cflow plan --input examples/plan.json
+"
     );
 }
 
@@ -548,6 +644,7 @@ fn run() -> CflowResult<()> {
     };
 
     match cmd.as_deref() {
+        Some("new") => command_new(&raw_args),
         Some("request") => command_request(&raw_args),
         Some("plan") => command_plan(&raw_args),
         Some("verify") => command_verify(&raw_args),

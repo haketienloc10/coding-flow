@@ -1,109 +1,18 @@
----
-name: cflow:request
-description: Classify a user request before planning.
-argument-hint: "[--auto] [--input <request.md>]"
-allowed-tools:
-  - Read
-  - Bash
-  - AskUserQuestion
-requires:
-  - cflow
----
+# Request Skill
 
-# cflow:request
+1. Do NOT create or write `.coding/request.json`. JSON is not stored.
+2. Pipe JSON directly into the CLI via stdin:
 
-## Purpose
-
-Evaluate the user request before creating a plan.
-
-Do not create or edit the code plan during this step.
-
-## Boundary
-
-```text
-User request
-  -> LLM classifies request
-  -> LLM produces request JSON
-  -> CLI validates
-  -> CLI renders .coding/REQUEST.md
-```
-
-LLM does not edit markdown directly.
-
-## Request Types
-
-Choose exactly one:
-
-```text
-question
-unclear
-investigation
-new_feature
-bug_fix
-refactor
-maintenance
-documentation
-test_only
-```
-
-## Lanes
-
-Choose exactly one:
-
-```text
-none
-needs_clarification
-tiny
-normal
-high_risk
-```
-
-## Risk Flags
-
-Use these when applicable:
-
-```text
-auth
-authorization
-data_model
-security_privacy
-external_system
-public_contract
-cross_platform
-existing_behavior_change
-weak_proof
-multi_domain
-```
-
-## Rules
-
-- If the request is a pure question, set `planning_needed=false` and `next_action=answer`.
-- If the request is unclear, set `lane=needs_clarification` and include minimal clarification questions.
-- If investigation is required before implementation, set `type=investigation` and `next_action=investigate`.
-- If code/docs/tests/config changes are needed, set `planning_needed=true` and `next_action=plan`.
-- Do not ask the human to classify risk. The system must classify it.
-- Do not edit markdown directly.
-
-## JSON Output
-
-Produce only valid JSON matching:
-
-```json
+```bash
+cat <<'JSON' | cflow request --task current
 {
-  "summary": "",
+  "summary": "Implement feature X",
   "type": "new_feature",
   "planning_needed": true,
   "lane": "normal",
-  "risk_flags": [],
-  "hard_gates": [],
-  "assumptions": [],
-  "clarifying_questions": [],
   "next_action": "plan"
 }
+JSON
 ```
 
-## CLI Command
-
-```bash
-cflow request --input .coding/request.json
-```
+3. The CLI will validate and render `.coding/tasks/<task-id>/REQUEST.md`. Do not create or edit markdown artifacts yourself.
