@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "checks": [
+    {
+      "name": "Build Check",
+      "command": "npm run build",
+      "status": "passed",
+      "notes": "Ensures no syntax errors in Vite build."
+    }
+  ],
+  "manual_checks": [
+    "start session",
+    "cancel session",
+    "complete session",
+    "reload page",
+    "clear garden"
+  ],
+  "regressions_checked": [],
+  "known_issues": [],
+  "done_criteria_verified": [
+    "Goal input and duration selection work.",
+    "Timer ticks accurately and automatically ends session when 0.",
+    "Trees (grown/withered) are correctly added to garden upon session end.",
+    "Data persists across reloads.",
+    "Empty state handles properly.",
+    "Clear garden works."
+  ]
+}

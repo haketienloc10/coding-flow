@@ -1,0 +1,97 @@
+{
+  "objective": "Build a single-page web app MVP called Focus Garden that allows users to run focus sessions and visualize their completed/cancelled sessions as a virtual garden.",
+  "scope": {
+    "in": [
+      "Main UI with idle state, running state, and garden state",
+      "Session duration selection (15, 25, or 45 mins)",
+      "Goal input field",
+      "Countdown timer",
+      "Session completion logic (adds 'grown' tree)",
+      "Session cancellation logic (adds 'withered' tree)",
+      "Garden display using a simple grid",
+      "LocalStorage persistence for garden data under key 'focus_garden_sessions'",
+      "Clear garden button",
+      "Basic UI layout"
+    ],
+    "out": [
+      "Authentication",
+      "Backend API",
+      "Database",
+      "Cross-device sync",
+      "OS notifications",
+      "Audio/sounds",
+      "Advanced stats/charts",
+      "Dark mode at MVP",
+      "Perfect mobile responsiveness"
+    ]
+  },
+  "requirements": [
+    "Must be a single-page app (SPA).",
+    "Must have 3 primary states: idle, running, complete/cancel.",
+    "Must use local component state and standard hooks or vanilla JS modules.",
+    "No external state management libraries.",
+    "No large external packages for timers.",
+    "Data model: FocusSession with id, goal, durationMinutes, status (grown/withered), startedAt, endedAt."
+  ],
+  "technical_approach": [
+    "Initialize a new Vite project for a Vanilla JS app in a subfolder 'focus-garden'.",
+    "Data persistence via a utility file (`storage.js`).",
+    "Timer logic via a simple JS interval.",
+    "CSS: Premium aesthetics in Vanilla CSS (glassmorphism, vibrant colors/gradients, smooth transitions)."
+  ],
+  "files_to_change": [
+    "focus-garden/index.html",
+    "focus-garden/src/main.js",
+    "focus-garden/src/style.css"
+  ],
+  "implementation_steps": [
+    {
+      "text": "Initialize Vite project in focus-garden directory",
+      "status": "todo"
+    },
+    {
+      "text": "Implement LocalStorage utilities (focus_garden_sessions key)",
+      "status": "todo"
+    },
+    {
+      "text": "Implement state variables and basic HTML structure",
+      "status": "todo"
+    },
+    {
+      "text": "Implement Timer & Session logic (Start, Cancel, Complete)",
+      "status": "todo"
+    },
+    {
+      "text": "Implement Garden UI rendering from LocalStorage",
+      "status": "todo"
+    },
+    {
+      "text": "Add premium styling (CSS) and animations",
+      "status": "todo"
+    }
+  ],
+  "test_plan": {
+    "planned": [
+      "Start a session and verify timer counts down.",
+      "Cancel session and verify withered tree appears.",
+      "Complete session and verify grown tree appears.",
+      "Reload page and verify items persist.",
+      "Clear garden and verify storage/UI resets."
+    ],
+    "result": []
+  },
+  "risks": [
+    "State desync between timer interval and UI rendering."
+  ],
+  "done_criteria": {
+    "items": [
+      "Goal input and duration selection work.",
+      "Timer ticks accurately and automatically ends session when 0.",
+      "Trees (grown/withered) are correctly added to garden upon session end.",
+      "Data persists across reloads.",
+      "Empty state handles properly.",
+      "Clear garden works."
+    ],
+    "verified": []
+  }
+}
