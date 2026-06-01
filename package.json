@@ -1,0 +1,14 @@
+{
+  "name": "coding-flow-v0",
+  "version": "0.0.1",
+  "description": "Tiny coding workflow: request -> plan -> verify -> ship",
+  "bin": {
+    "cflow": "./bin/cflow"
+  },
+  "scripts": {
+    "build": "cargo build",
+    "test": "cargo test"
+  },
+  "license": "MIT",
+  "private": true
+}

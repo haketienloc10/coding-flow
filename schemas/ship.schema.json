@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Flow Ship",
+  "type": "object",
+  "required": ["ready", "commit", "verification"],
+  "properties": {
+    "ready": { "type": "boolean" },
+    "commit": {
+      "type": "object",
+      "required": ["type", "message"],
+      "properties": {
+        "type": { "type": "string", "enum": ["feat", "fix", "refactor", "docs", "test", "chore", "ci", "build", "perf"] },
+        "scope": { "type": "string" },
+        "message": { "type": "string", "minLength": 1 },
+        "body": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "array", "items": { "type": "string" } },
+    "verification": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["passed", "failed", "partial", "skipped"] },
+        "source": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Flow Code Plan",
+  "type": "object",
+  "required": [
+    "objective",
+    "scope",
+    "requirements",
+    "technical_approach",
+    "done_criteria"
+  ],
+  "properties": {
+    "objective": { "type": "string", "minLength": 1 },
+    "scope": {
+      "type": "object",
+      "required": ["in", "out"],
+      "properties": {
+        "in": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "out": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      },
+      "additionalProperties": false
+    },
+    "requirements": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "technical_approach": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "files_to_change": { "type": "array", "items": { "type": "string" } },
+    "implementation_steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "status"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["todo", "in_progress", "done", "blocked"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "test_plan": {
+      "type": "object",
+      "properties": {
+        "planned": { "type": "array", "items": { "type": "string" } },
+        "result": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "done_criteria": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "verified": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

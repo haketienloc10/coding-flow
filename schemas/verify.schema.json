@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Flow Verify",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": { "type": "string", "enum": ["passed", "failed", "partial", "skipped"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "command", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "command": { "type": "string" },
+          "status": { "type": "string", "enum": ["passed", "failed", "partial", "skipped"] },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "manual_checks": { "type": "array", "items": { "type": "string" } },
+    "regressions_checked": { "type": "array", "items": { "type": "string" } },
+    "known_issues": { "type": "array", "items": { "type": "string" } },
+    "done_criteria_verified": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}
