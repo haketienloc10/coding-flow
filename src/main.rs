@@ -782,6 +782,128 @@ fn command_status() {
 }
 
 
+fn get_verify_status(task_path: &str) -> Option<String> {
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    let content = fs::read_to_string(&verify_path).ok()?;
+    let mut lines = content.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() == "## Status" {
+            while let Some(status_line) = lines.next() {
+                let trimmed = status_line.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+struct NextAction {
+    command: String,
+    reason: String,
+}
+
+fn determine_next_action(task_path: &str) -> NextAction {
+    let req = Path::new(&format!("{}/REQUEST.md", task_path)).exists();
+    let plan = Path::new(&format!("{}/PLAN.md", task_path)).exists();
+    let coding = Path::new(&format!("{}/CODING.md", task_path)).exists();
+    let verify = Path::new(&format!("{}/VERIFY.md", task_path)).exists();
+    let ship = Path::new(&format!("{}/SHIP.md", task_path)).exists();
+
+    if !req {
+        NextAction {
+            command: "request".to_string(),
+            reason: "REQUEST.md is missing".to_string(),
+        }
+    } else if !plan {
+        NextAction {
+            command: "agent plan".to_string(),
+            reason: "PLAN.md is missing".to_string(),
+        }
+    } else if !coding {
+        NextAction {
+            command: "agent coding".to_string(),
+            reason: "CODING.md is missing".to_string(),
+        }
+    } else if !verify {
+        NextAction {
+            command: "verify".to_string(),
+            reason: "VERIFY.md is missing".to_string(),
+        }
+    } else {
+        let status = get_verify_status(task_path).unwrap_or_default();
+        if status == "passed" {
+            if !ship {
+                NextAction {
+                    command: "ship --dry-run".to_string(),
+                    reason: "VERIFY.md exists and status is passed and SHIP.md missing".to_string(),
+                }
+            } else {
+                NextAction {
+                    command: "done or commit pending".to_string(),
+                    reason: "SHIP.md exists".to_string(),
+                }
+            }
+        } else {
+            NextAction {
+                command: "fix or verify again".to_string(),
+                reason: format!("VERIFY.md status is {}", status),
+            }
+        }
+    }
+}
+
+fn command_next(args: &[String]) -> CflowResult<()> {
+    let task_path = resolve_task(args)?;
+    let next = determine_next_action(&task_path);
+    println!("Next: {}", next.command);
+    println!("Reason: {}", next.reason);
+    Ok(())
+}
+
+fn command_run(args: &[String]) -> CflowResult<()> {
+    let task_path = resolve_task(args)?;
+    
+    loop {
+        let next = determine_next_action(&task_path);
+        
+        match next.command.as_str() {
+            "agent plan" => {
+                println!("Next: {}", next.command);
+                println!("Reason: {}", next.reason);
+                println!("--- Running: {} ---", next.command);
+                let current_args = vec!["plan".to_string(), "--task".to_string(), "current".to_string()];
+                command_agent(&current_args)?;
+            }
+            "agent coding" => {
+                println!("Next: {}", next.command);
+                println!("Reason: {}", next.reason);
+                println!("--- Running: {} ---", next.command);
+                let current_args = vec!["coding".to_string(), "--task".to_string(), "current".to_string()];
+                command_agent(&current_args)?;
+            }
+            "ship --dry-run" => {
+                println!("Next: {}", next.command);
+                println!("Reason: {}", next.reason);
+                println!("--- Running: {} ---", next.command);
+                let mut cmd = Command::new(env::current_exe().unwrap_or_else(|_| "cflow".into()));
+                cmd.args(["ship", "--dry-run", "--task", "current"]);
+                cmd.status().map_err(|e| e.to_string())?;
+                break;
+            }
+            _ => {
+                println!("Next: {}", next.command);
+                println!("Reason: {}", next.reason);
+                println!("Stopping because human input is needed or task is complete.");
+                break;
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 fn print_usage() {
     println!(
         "Usage:
@@ -794,11 +916,15 @@ fn print_usage() {
   cflow verify  [--task current] [--input file]
   cflow ship    [--task current] [--input file] [--dry-run|--commit]
   cflow status
+  cflow next    [--task current]
+  cflow run     [--task current]
 
 Examples:
   cflow new \"focus garden\"
   cat request.json | cflow request
   cflow plan --input examples/plan.json
+  cflow next
+  cflow run
 "
     );
 }
@@ -823,6 +949,8 @@ fn run() -> CflowResult<()> {
             command_status();
             Ok(())
         }
+        Some("next") => command_next(&raw_args),
+        Some("run") => command_run(&raw_args),
         _ => {
             print_usage();
             Ok(())
