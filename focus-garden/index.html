@@ -3,62 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Focus Garden</title>
-    <meta name="description" content="A minimalistic focus timer that grows a virtual garden." />
-    <!-- Google Fonts -->
+    <title>Time Capsule Notes</title>
+    <meta name="description" content="Write notes that unlock in the future." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body>
     <div class="app-container">
-      <header>
-        <h1>🌱 Focus Garden</h1>
-        <p>Plant your focus, grow your garden.</p>
+      <header class="app-header">
+        <h1>Time Capsule Notes</h1>
+        <p>Seal a message for later and open it only when its time arrives.</p>
       </header>
 
-      <main>
-        <!-- Idle State -->
-        <section id="idle-state" class="state-section active">
-          <div class="card">
-            <h2>New Session</h2>
+      <main class="app-main">
+        <section class="card" aria-labelledby="form-heading">
+          <h2 id="form-heading">Create capsule</h2>
+          <form id="capsule-form" novalidate>
             <div class="form-group">
-              <label for="goal-input">What's your goal?</label>
-              <input type="text" id="goal-input" placeholder="e.g. Read API documentation" />
+              <label for="capsule-title">Title</label>
+              <input type="text" id="capsule-title" autocomplete="off" />
             </div>
+
             <div class="form-group">
-              <label>Duration (minutes)</label>
-              <div class="duration-selector">
-                <button class="duration-btn" data-duration="15">15</button>
-                <button class="duration-btn active" data-duration="25">25</button>
-                <button class="duration-btn" data-duration="45">45</button>
-              </div>
+              <label for="capsule-content">Message</label>
+              <textarea id="capsule-content" rows="5"></textarea>
             </div>
-            <button id="start-btn" class="primary-btn" disabled>Start Focus Session</button>
-          </div>
+
+            <div class="form-group">
+              <label for="capsule-unlock">Unlock at</label>
+              <input type="datetime-local" id="capsule-unlock" />
+            </div>
+
+            <p id="capsule-error" class="form-error" aria-live="polite"></p>
+            <button id="seal-btn" class="primary-btn" type="submit" disabled>Seal capsule</button>
+          </form>
         </section>
 
-        <!-- Running State -->
-        <section id="running-state" class="state-section">
-          <div class="card timer-card">
-            <h2 id="current-goal">Reading API documentation</h2>
-            <div class="progress-text">Planting your focus tree...</div>
-            <div class="timer-display" id="timer-display">25:00</div>
-            <button id="cancel-btn" class="secondary-btn">Cancel Session</button>
+        <section class="capsules-section" aria-labelledby="capsules-heading">
+          <div class="section-header">
+            <h2 id="capsules-heading">Capsules</h2>
           </div>
-        </section>
 
-        <!-- Garden -->
-        <section id="garden-section">
-          <div class="garden-header">
-            <h2>Today's Garden</h2>
-            <button id="clear-btn" class="ghost-btn">Clear</button>
-          </div>
-          <div id="garden-grid" class="garden-grid">
-            <!-- Items injected by JS -->
-          </div>
-          <div id="empty-state" class="empty-state">
-            <p>No trees planted yet today.</p>
+          <div id="capsule-list" class="capsule-list"></div>
+          <div id="capsule-empty-state" class="empty-state">
+            <p>No time capsules yet.</p>
           </div>
         </section>
       </main>
