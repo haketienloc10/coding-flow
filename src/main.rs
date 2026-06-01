@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{self, Command, Stdio};
 
@@ -69,7 +70,10 @@ fn ensure_dir(file_path: &str) -> CflowResult<()> {
 }
 
 fn read_json_input(args: &[String]) -> CflowResult<Value> {
-    let input_opt = args.iter().position(|arg| arg == "--input").and_then(|idx| args.get(idx + 1));
+    let input_opt = args
+        .iter()
+        .position(|arg| arg == "--input")
+        .and_then(|idx| args.get(idx + 1));
     let content = if let Some(input_file) = input_opt {
         if !Path::new(input_file).exists() {
             return Err(format!("Input file not found: {}", input_file));
@@ -78,13 +82,47 @@ fn read_json_input(args: &[String]) -> CflowResult<Value> {
     } else {
         use std::io::Read;
         let mut buffer = String::new();
-        std::io::stdin().read_to_string(&mut buffer).map_err(|error| error.to_string())?;
+        std::io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|error| error.to_string())?;
         if buffer.trim().is_empty() {
             return Err("No input provided via stdin. Use --input or pipe JSON.".to_string());
         }
         buffer
     };
     serde_json::from_str(&content).map_err(|error| format!("Invalid JSON: {}", error))
+}
+
+fn read_optional_json_input(args: &[String]) -> CflowResult<Option<Value>> {
+    let input_opt = args
+        .iter()
+        .position(|arg| arg == "--input")
+        .and_then(|idx| args.get(idx + 1));
+    let content = if let Some(input_file) = input_opt {
+        if !Path::new(input_file).exists() {
+            return Err(format!("Input file not found: {}", input_file));
+        }
+        fs::read_to_string(input_file).map_err(|error| error.to_string())?
+    } else {
+        let mut stdin = std::io::stdin();
+        if stdin.is_terminal() {
+            return Ok(None);
+        }
+
+        use std::io::Read;
+        let mut buffer = String::new();
+        stdin
+            .read_to_string(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if buffer.trim().is_empty() {
+            return Ok(None);
+        }
+        buffer
+    };
+
+    serde_json::from_str(&content)
+        .map(Some)
+        .map_err(|error| format!("Invalid JSON: {}", error))
 }
 
 fn slugify(text: &str) -> String {
@@ -114,7 +152,6 @@ fn resolve_task(args: &[String]) -> CflowResult<String> {
         Ok(format!(".coding/tasks/{}", task))
     }
 }
-
 
 fn write_text(file_path: &str, content: &str) -> CflowResult<()> {
     ensure_dir(file_path)?;
@@ -168,6 +205,79 @@ fn option_to_js_string(value: Option<&Value>) -> String {
     value
         .map(value_to_js_string)
         .unwrap_or_else(|| "undefined".to_string())
+}
+
+fn markdown_section<'a>(content: &'a str, heading: &str) -> Option<Vec<&'a str>> {
+    let heading = format!("## {heading}");
+    let mut lines = content.lines();
+
+    while let Some(line) = lines.next() {
+        if line.trim() == heading {
+            let mut section = Vec::new();
+            for section_line in lines.by_ref() {
+                if section_line.starts_with("## ") {
+                    break;
+                }
+                section.push(section_line);
+            }
+            return Some(section);
+        }
+    }
+
+    None
+}
+
+fn first_non_empty_section_line(content: &str, heading: &str) -> Option<String> {
+    markdown_section(content, heading)?
+        .into_iter()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+fn section_has_findings(content: &str, heading: &str) -> bool {
+    let Some(section) = markdown_section(content, heading) else {
+        return false;
+    };
+
+    section.into_iter().map(str::trim).any(|line| {
+        !line.is_empty()
+            && line != "- _None_"
+            && line != "_None_"
+            && !line.eq_ignore_ascii_case("none")
+    })
+}
+
+fn parse_ship_commit_message(content: &str) -> Option<String> {
+    let section = markdown_section(content, "Commit Message")?;
+    let mut in_fence = false;
+    let mut saw_fence = false;
+
+    for line in &section {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            saw_fence = true;
+            if in_fence {
+                break;
+            }
+            in_fence = true;
+            continue;
+        }
+
+        if in_fence && !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    if saw_fence {
+        return None;
+    }
+
+    section
+        .into_iter()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
 }
 
 fn require_field(value: Option<&Value>, name: &str) -> CflowResult<()> {
@@ -489,32 +599,39 @@ where
 
 fn run_agent(prompt: &str) -> CflowResult<String> {
     let cmd = env::var("CFLOW_AGENT_CMD").unwrap_or_else(|_| "codex exec".to_string());
-    
+
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.is_empty() {
         return Err("CFLOW_AGENT_CMD is empty".to_string());
     }
-    
+
     let mut command = Command::new(parts[0]);
     command.args(&parts[1..]);
-    
+
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::inherit());
-    
-    let mut child = command.spawn().map_err(|e| format!("Failed to start agent command '{}': {}", cmd, e))?;
-    
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Failed to start agent command '{}': {}", cmd, e))?;
+
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        stdin.write_all(prompt.as_bytes()).map_err(|e| e.to_string())?;
+        stdin
+            .write_all(prompt.as_bytes())
+            .map_err(|e| e.to_string())?;
     }
-    
+
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    
+
     if !output.status.success() {
-        return Err(format!("Agent command failed with exit code: {:?}", output.status.code()));
+        return Err(format!(
+            "Agent command failed with exit code: {:?}",
+            output.status.code()
+        ));
     }
-    
+
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -522,38 +639,59 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
     let task_path = resolve_task(args)?;
     let request_path = format!("{}/REQUEST.md", task_path);
     if !Path::new(&request_path).exists() {
-        return Err(format!("Task folder does not exist or missing REQUEST.md: {}", task_path));
+        return Err(format!(
+            "Task folder does not exist or missing REQUEST.md: {}",
+            task_path
+        ));
     }
-    
+
     let request_md = fs::read_to_string(&request_path).map_err(|e| e.to_string())?;
     let skill_path = "skills/agent-plan.md";
     let skill = fs::read_to_string(skill_path).unwrap_or_else(|_| "Provide JSON plan.".to_string());
-    
+
     let prompt = format!("{}\n\n# Current REQUEST.md\n\n{}", skill, request_md);
-    
+
     let stdout = run_agent(&prompt)?;
-    
+
     let json_str = stdout.trim();
     let json_str = if json_str.contains("```json") {
-        json_str.split("```json").nth(1).unwrap_or(json_str).split("```").next().unwrap_or(json_str).trim()
+        json_str
+            .split("```json")
+            .nth(1)
+            .unwrap_or(json_str)
+            .split("```")
+            .next()
+            .unwrap_or(json_str)
+            .trim()
     } else {
         json_str
     };
-    
-    let data: Value = serde_json::from_str(json_str).map_err(|e| format!("Agent output is not valid JSON: {}\nOutput was:\n{}", e, stdout))?;
-    
+
+    let data: Value = serde_json::from_str(json_str).map_err(|e| {
+        format!(
+            "Agent output is not valid JSON: {}\nOutput was:\n{}",
+            e, stdout
+        )
+    })?;
+
     validate_plan(&data)?;
     let output_path = format!("{}/PLAN.md", task_path);
     write_text(&output_path, &render_plan(&data))?;
-    
-    let steps_len = get_path(&data, &["implementation_steps"]).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let files_len = get_path(&data, &["files_to_change"]).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    
+
+    let steps_len = get_path(&data, &["implementation_steps"])
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let files_len = get_path(&data, &["files_to_change"])
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
     println!("Plan created: {}", output_path);
     println!("Implementation steps: {}", steps_len);
     println!("Files expected: {}", files_len);
     println!("Next: cflow agent coding --task current");
-    
+
     Ok(())
 }
 
@@ -561,38 +699,57 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
     let task_path = resolve_task(args)?;
     let plan_path = format!("{}/PLAN.md", task_path);
     if !Path::new(&plan_path).exists() {
-        return Err(format!("Task folder does not exist or missing PLAN.md: {}", task_path));
+        return Err(format!(
+            "Task folder does not exist or missing PLAN.md: {}",
+            task_path
+        ));
     }
-    
+
     let plan_md = fs::read_to_string(&plan_path).map_err(|e| e.to_string())?;
     let skill_path = "skills/agent-coding.md";
-    let skill = fs::read_to_string(skill_path).unwrap_or_else(|_| "Implement and provide JSON coding summary.".to_string());
-    
+    let skill = fs::read_to_string(skill_path)
+        .unwrap_or_else(|_| "Implement and provide JSON coding summary.".to_string());
+
     let prompt = format!("{}\n\n# Current PLAN.md\n\n{}", skill, plan_md);
-    
+
     let stdout = run_agent(&prompt)?;
-    
+
     let json_str = stdout.trim();
     let json_str = if json_str.contains("```json") {
-        json_str.split("```json").nth(1).unwrap_or(json_str).split("```").next().unwrap_or(json_str).trim()
+        json_str
+            .split("```json")
+            .nth(1)
+            .unwrap_or(json_str)
+            .split("```")
+            .next()
+            .unwrap_or(json_str)
+            .trim()
     } else {
         json_str
     };
-    
-    let data: Value = serde_json::from_str(json_str).map_err(|e| format!("Agent output is not valid JSON: {}\nOutput was:\n{}", e, stdout))?;
-    
+
+    let data: Value = serde_json::from_str(json_str).map_err(|e| {
+        format!(
+            "Agent output is not valid JSON: {}\nOutput was:\n{}",
+            e, stdout
+        )
+    })?;
+
     validate_coding(&data)?;
     let output_path = format!("{}/CODING.md", task_path);
     write_text(&output_path, &render_coding(&data))?;
-    
+
     let status = option_to_js_string(get_path(&data, &["status"]));
-    let files_len = get_path(&data, &["changed_files"]).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    
+    let files_len = get_path(&data, &["changed_files"])
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
     println!("Coding completed: {}", output_path);
     println!("Status: {}", status);
     println!("Changed files: {}", files_len);
     println!("Next: cflow verify --task current");
-    
+
     Ok(())
 }
 
@@ -600,7 +757,7 @@ fn command_agent(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
         return Err("Usage: cflow agent plan|coding [--task current]".to_string());
     }
-    
+
     match args[0].as_str() {
         "plan" => command_agent_plan(&args[1..]),
         "coding" => command_agent_coding(&args[1..]),
@@ -613,22 +770,26 @@ fn command_new(args: &[String]) -> CflowResult<()> {
     if name.is_empty() {
         return Err("Missing task name. Usage: cflow new \"<task-name>\"".to_string());
     }
-    
+
     let now = chrono::Local::now();
     let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
     let slug = slugify(&name);
-    let task_id = if slug.is_empty() { timestamp.clone() } else { format!("{}-{}", timestamp, slug) };
-    
+    let task_id = if slug.is_empty() {
+        timestamp.clone()
+    } else {
+        format!("{}-{}", timestamp, slug)
+    };
+
     let task_path = format!("tasks/{}", task_id);
     let full_path = format!(".coding/{}", task_path);
-    
+
     ensure_dir(&format!("{}/.placeholder", full_path))?;
-    
+
     write_text(".coding/current", &task_path)?;
-    
+
     println!("Task created: {}", task_id);
     println!("Path: {}", full_path);
-    
+
     Ok(())
 }
 
@@ -692,26 +853,75 @@ fn command_verify(args: &[String]) -> CflowResult<()> {
     Ok(())
 }
 
+fn ensure_verify_passed_for_ship(task_path: &str) -> CflowResult<()> {
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    if !Path::new(&verify_path).exists() {
+        return Err("Ship rejected: VERIFY.md is missing".to_string());
+    }
+
+    let content = fs::read_to_string(&verify_path).map_err(|error| error.to_string())?;
+    let status = first_non_empty_section_line(&content, "Status")
+        .ok_or_else(|| "Ship rejected: VERIFY.md status is missing".to_string())?;
+
+    if status != "passed" {
+        return Err(format!(
+            "Ship rejected: VERIFY.md status must be passed (found {status})"
+        ));
+    }
+
+    if section_has_findings(&content, "Known Issues") || section_has_findings(&content, "Findings")
+    {
+        return Err("Ship rejected: VERIFY.md has findings".to_string());
+    }
+
+    Ok(())
+}
+
 fn command_ship(args: &[String]) -> CflowResult<()> {
     let task_path = resolve_task(args)?;
     if !Path::new(&task_path).exists() {
         return Err(format!("Task folder does not exist: {}", task_path));
     }
-    let verify_path = format!("{}/VERIFY.md", task_path);
-    if !Path::new(&verify_path).exists() {
-        return Err("Ship rejected: VERIFY.md chưa tồn tại trong task folder".to_string());
+
+    let dry_run = has_flag(args, "--dry-run");
+    let commit = has_flag(args, "--commit");
+    let output = format!("{}/SHIP.md", task_path);
+    let existing_ship = Path::new(&output).exists();
+    let data = read_optional_json_input(args)?;
+
+    if !dry_run && !commit && data.is_none() {
+        if existing_ship {
+            println!("SHIP.md already exists.");
+            println!("Next options:");
+            println!("- cflow ship --task current --dry-run");
+            println!("- cflow ship --task current --commit");
+        } else {
+            println!("SHIP.md does not exist.");
+            println!("Provide ship JSON via stdin or --input to create it.");
+        }
+        return Ok(());
     }
+
+    ensure_verify_passed_for_ship(&task_path)?;
+
     let coding_path = format!("{}/CODING.md", task_path);
     if !Path::new(&coding_path).exists() {
         println!("Warning: CODING.md is missing.");
     }
-    let output = format!("{}/SHIP.md", task_path);
-    let data = read_json_input(args)?;
-    validate_ship(&data)?;
-    write_text(&output, &render_ship(&data))?;
-    println!("created {}", output);
 
-    if has_flag(args, "--dry-run") {
+    if let Some(data) = data {
+        validate_ship(&data)?;
+        write_text(&output, &render_ship(&data))?;
+        println!("created {}", output);
+    } else if !existing_ship {
+        return Err(
+            "Ship rejected: SHIP.md is missing; provide ship JSON via stdin or --input".to_string(),
+        );
+    } else {
+        println!("using existing {}", output);
+    }
+
+    if dry_run {
         if is_git_repo() {
             git(["status", "--short"])?;
         } else {
@@ -719,40 +929,20 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
         }
     }
 
-    if has_flag(args, "--commit") {
+    if commit {
         if !is_git_repo() {
             return Err("Ship rejected: not a git repository".to_string());
         }
 
-        let scope = if is_truthy(get_path(&data, &["commit", "scope"])) {
-            format!(
-                "({})",
-                option_to_js_string(get_path(&data, &["commit", "scope"]))
-            )
-        } else {
-            String::new()
-        };
-
-        let subject = format!(
-            "{}{}: {}",
-            option_to_js_string(get_path(&data, &["commit", "type"])),
-            scope,
-            option_to_js_string(get_path(&data, &["commit", "message"]))
-        );
-
-        let mut commit_args = vec!["commit".to_string(), "-m".to_string(), subject];
-        if let Some(Value::Array(body)) = get_path(&data, &["commit", "body"]) {
-            for line in body {
-                commit_args.push("-m".to_string());
-                commit_args.push(value_to_js_string(line));
-            }
-        }
+        let ship_content = fs::read_to_string(&output).map_err(|error| error.to_string())?;
+        let subject = parse_ship_commit_message(&ship_content)
+            .ok_or_else(|| "Ship rejected: SHIP.md commit message is missing".to_string())?;
 
         git(["add", "."])?;
-        git(commit_args)?;
+        git(["commit", "-m", subject.as_str()])?;
     }
 
-    if !has_flag(args, "--dry-run") && !has_flag(args, "--commit") {
+    if !dry_run && !commit {
         println!("ship artifact created. use --dry-run or --commit for git actions.");
     }
 
@@ -764,39 +954,31 @@ fn command_status() {
         println!("No current task. Run `cflow new \"<task-name>\"` first.");
         return;
     }
-    
+
     let current_task = fs::read_to_string(".coding/current").unwrap_or_default();
     let current_task = current_task.trim();
     let task_id = current_task.strip_prefix("tasks/").unwrap_or(current_task);
-    
+
     println!("Current task: {}", task_id);
     println!("Path: .coding/{}", current_task);
     println!("Artifacts:");
-    
+
     let files = ["REQUEST.md", "PLAN.md", "CODING.md", "VERIFY.md", "SHIP.md"];
     for file in files {
         let file_path = format!(".coding/{}/{}", current_task, file);
-        let status = if Path::new(&file_path).exists() { "exists" } else { "missing" };
+        let status = if Path::new(&file_path).exists() {
+            "exists"
+        } else {
+            "missing"
+        };
         println!("- {}: {}", file, status);
     }
 }
 
-
 fn get_verify_status(task_path: &str) -> Option<String> {
     let verify_path = format!("{}/VERIFY.md", task_path);
     let content = fs::read_to_string(&verify_path).ok()?;
-    let mut lines = content.lines();
-    while let Some(line) = lines.next() {
-        if line.trim() == "## Status" {
-            while let Some(status_line) = lines.next() {
-                let trimmed = status_line.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    first_non_empty_section_line(&content, "Status")
 }
 
 struct NextAction {
@@ -864,23 +1046,31 @@ fn command_next(args: &[String]) -> CflowResult<()> {
 
 fn command_run(args: &[String]) -> CflowResult<()> {
     let task_path = resolve_task(args)?;
-    
+
     loop {
         let next = determine_next_action(&task_path);
-        
+
         match next.command.as_str() {
             "agent plan" => {
                 println!("Next: {}", next.command);
                 println!("Reason: {}", next.reason);
                 println!("--- Running: {} ---", next.command);
-                let current_args = vec!["plan".to_string(), "--task".to_string(), "current".to_string()];
+                let current_args = vec![
+                    "plan".to_string(),
+                    "--task".to_string(),
+                    "current".to_string(),
+                ];
                 command_agent(&current_args)?;
             }
             "agent coding" => {
                 println!("Next: {}", next.command);
                 println!("Reason: {}", next.reason);
                 println!("--- Running: {} ---", next.command);
-                let current_args = vec!["coding".to_string(), "--task".to_string(), "current".to_string()];
+                let current_args = vec![
+                    "coding".to_string(),
+                    "--task".to_string(),
+                    "current".to_string(),
+                ];
                 command_agent(&current_args)?;
             }
             "ship --dry-run" => {
@@ -900,7 +1090,7 @@ fn command_run(args: &[String]) -> CflowResult<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -1004,5 +1194,29 @@ mod tests {
             validate_ship(&data).expect_err("ship should reject failed verification"),
             "Ship rejected: verification.status must be passed"
         );
+    }
+
+    #[test]
+    fn parses_commit_message_from_ship_markdown_fence() {
+        let rendered = render_ship(&parse_json(include_str!("../examples/ship.json")));
+
+        assert_eq!(
+            parse_ship_commit_message(&rendered).as_deref(),
+            Some("feat(docs): add copy button to code blocks")
+        );
+    }
+
+    #[test]
+    fn verify_known_issues_section_counts_as_findings() {
+        let verify = "# Verify\n\n## Status\n\npassed\n\n## Known Issues\n\n- Follow-up needed\n";
+
+        assert!(section_has_findings(verify, "Known Issues"));
+    }
+
+    #[test]
+    fn verify_none_section_has_no_findings() {
+        let verify = "# Verify\n\n## Status\n\npassed\n\n## Known Issues\n\n- _None_\n";
+
+        assert!(!section_has_findings(verify, "Known Issues"));
     }
 }
