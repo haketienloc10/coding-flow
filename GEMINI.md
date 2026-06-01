@@ -1,24 +1,37 @@
-# GEMINI.md
+# Agent Instructions
 
-Flow: request -> plan -> implement -> verify -> ship
+## Flow
 
-Always create/select a task first:
-cflow new "<task-name>"
+Use this flow for coding work:
 
-Do not create or keep .coding/*.json files.
+```text
+request -> agent plan -> agent coding -> verify -> ship
+```
 
-Use JSON only as stdin input to cflow.
+Manual fallback:
 
-Persistent artifacts are only:
-- .coding/tasks/<task-id>/REQUEST.md
-- .coding/tasks/<task-id>/PLAN.md
-- .coding/tasks/<task-id>/VERIFY.md
-- .coding/tasks/<task-id>/SHIP.md
+```text
+request -> plan -> coding -> verify -> ship
+```
 
-Do not edit these markdown artifacts directly.
-Use cflow to render them.
+## Core Rules
 
-Do not ship unless VERIFY.md exists and verification status is passed.
+* Always create/select a task first with `cflow new "<task-name>"`.
+* Use `.coding/tasks/<task-id>/` for task artifacts.
+* Do not create or keep `.coding/*.json` files.
+* Use JSON only as transient stdin/stdout input for `cflow`.
+* Do not edit artifact markdown directly.
+* Let `cflow` render:
 
-Use --dry-run before --commit.
-Commit only when the user explicitly asks to commit.
+  * REQUEST.md
+  * PLAN.md
+  * CODING.md
+  * VERIFY.md
+  * SHIP.md
+* Prefer `cflow agent plan --task current` for non-trivial planning.
+* Prefer `cflow agent coding --task current` for non-trivial implementation.
+* Keep main context clean: rely on short `cflow` summaries.
+* Do not read long artifacts unless debugging or explicitly needed.
+* Do not ship unless `VERIFY.md` exists and verification status is `passed`.
+* Use `--dry-run` before `--commit`.
+* Commit only when the user explicitly asks to commit.

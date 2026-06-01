@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "required": ["status", "summary", "changed_files", "notes", "next"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ready_for_verify", "blocked", "partial", "failed"]
+    },
+    "summary": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "next": {
+      "type": "string",
+      "enum": ["verify", "plan", "clarify", "none"]
+    }
+  },
+  "additionalProperties": false
+}

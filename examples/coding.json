@@ -1,0 +1,7 @@
+{
+  "status": "ready_for_verify",
+  "summary": ["Implemented focus garden MVP"],
+  "changed_files": ["src/App.tsx"],
+  "notes": [],
+  "next": "verify"
+}

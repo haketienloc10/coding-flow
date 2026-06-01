@@ -25,6 +25,10 @@ const REQUEST_NEXT_ACTIONS: &[&str] = &["answer", "clarify", "investigate", "pla
 
 const STEP_STATUSES: &[&str] = &["todo", "in_progress", "done", "blocked"];
 
+const CODING_STATUSES: &[&str] = &["ready_for_verify", "blocked", "partial", "failed"];
+
+const CODING_NEXT_ACTIONS: &[&str] = &["verify", "plan", "clarify", "none"];
+
 const VERIFY_STATUSES: &[&str] = &["passed", "failed", "partial", "skipped"];
 
 const COMMIT_TYPES: &[&str] = &[
@@ -308,6 +312,18 @@ fn validate_plan(data: &Value) -> CflowResult<()> {
     Ok(())
 }
 
+fn validate_coding(data: &Value) -> CflowResult<()> {
+    require_field(get_path(data, &["status"]), "status")?;
+    require_field(get_path(data, &["summary"]), "summary")?;
+    require_field(get_path(data, &["changed_files"]), "changed_files")?;
+    require_field(get_path(data, &["next"]), "next")?;
+
+    assert_allowed(get_path(data, &["status"]), CODING_STATUSES, "status")?;
+    assert_allowed(get_path(data, &["next"]), CODING_NEXT_ACTIONS, "next")?;
+
+    Ok(())
+}
+
 fn validate_verify(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["status"]), "status")?;
     assert_allowed(get_path(data, &["status"]), VERIFY_STATUSES, "status")
@@ -379,6 +395,17 @@ fn render_plan(data: &Value) -> String {
         list(get_path(data, &["risks"])),
         list(get_path(data, &["done_criteria", "items"])),
         list(get_path(data, &["done_criteria", "verified"]))
+    )
+}
+
+fn render_coding(data: &Value) -> String {
+    format!(
+        "# Coding\n\n## Status\n\n{}\n\n## Summary\n\n{}\n\n## Changed Files\n\n{}\n\n## Notes\n\n{}\n\n## Next\n\n{}\n",
+        option_to_js_string(get_path(data, &["status"])),
+        list(get_path(data, &["summary"])),
+        list(get_path(data, &["changed_files"])),
+        list(get_path(data, &["notes"])),
+        option_to_js_string(get_path(data, &["next"]))
     )
 }
 
@@ -460,6 +487,127 @@ where
     }
 }
 
+fn run_agent(prompt: &str) -> CflowResult<String> {
+    let cmd = env::var("CFLOW_AGENT_CMD").unwrap_or_else(|_| "codex exec".to_string());
+    
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.is_empty() {
+        return Err("CFLOW_AGENT_CMD is empty".to_string());
+    }
+    
+    let mut command = Command::new(parts[0]);
+    command.args(&parts[1..]);
+    
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::inherit());
+    
+    let mut child = command.spawn().map_err(|e| format!("Failed to start agent command '{}': {}", cmd, e))?;
+    
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(prompt.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    
+    if !output.status.success() {
+        return Err(format!("Agent command failed with exit code: {:?}", output.status.code()));
+    }
+    
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn command_agent_plan(args: &[String]) -> CflowResult<()> {
+    let task_path = resolve_task(args)?;
+    let request_path = format!("{}/REQUEST.md", task_path);
+    if !Path::new(&request_path).exists() {
+        return Err(format!("Task folder does not exist or missing REQUEST.md: {}", task_path));
+    }
+    
+    let request_md = fs::read_to_string(&request_path).map_err(|e| e.to_string())?;
+    let skill_path = "skills/agent-plan.md";
+    let skill = fs::read_to_string(skill_path).unwrap_or_else(|_| "Provide JSON plan.".to_string());
+    
+    let prompt = format!("{}\n\n# Current REQUEST.md\n\n{}", skill, request_md);
+    
+    let stdout = run_agent(&prompt)?;
+    
+    let json_str = stdout.trim();
+    let json_str = if json_str.contains("```json") {
+        json_str.split("```json").nth(1).unwrap_or(json_str).split("```").next().unwrap_or(json_str).trim()
+    } else {
+        json_str
+    };
+    
+    let data: Value = serde_json::from_str(json_str).map_err(|e| format!("Agent output is not valid JSON: {}\nOutput was:\n{}", e, stdout))?;
+    
+    validate_plan(&data)?;
+    let output_path = format!("{}/PLAN.md", task_path);
+    write_text(&output_path, &render_plan(&data))?;
+    
+    let steps_len = get_path(&data, &["implementation_steps"]).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let files_len = get_path(&data, &["files_to_change"]).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    
+    println!("Plan created: {}", output_path);
+    println!("Implementation steps: {}", steps_len);
+    println!("Files expected: {}", files_len);
+    println!("Next: cflow agent coding --task current");
+    
+    Ok(())
+}
+
+fn command_agent_coding(args: &[String]) -> CflowResult<()> {
+    let task_path = resolve_task(args)?;
+    let plan_path = format!("{}/PLAN.md", task_path);
+    if !Path::new(&plan_path).exists() {
+        return Err(format!("Task folder does not exist or missing PLAN.md: {}", task_path));
+    }
+    
+    let plan_md = fs::read_to_string(&plan_path).map_err(|e| e.to_string())?;
+    let skill_path = "skills/agent-coding.md";
+    let skill = fs::read_to_string(skill_path).unwrap_or_else(|_| "Implement and provide JSON coding summary.".to_string());
+    
+    let prompt = format!("{}\n\n# Current PLAN.md\n\n{}", skill, plan_md);
+    
+    let stdout = run_agent(&prompt)?;
+    
+    let json_str = stdout.trim();
+    let json_str = if json_str.contains("```json") {
+        json_str.split("```json").nth(1).unwrap_or(json_str).split("```").next().unwrap_or(json_str).trim()
+    } else {
+        json_str
+    };
+    
+    let data: Value = serde_json::from_str(json_str).map_err(|e| format!("Agent output is not valid JSON: {}\nOutput was:\n{}", e, stdout))?;
+    
+    validate_coding(&data)?;
+    let output_path = format!("{}/CODING.md", task_path);
+    write_text(&output_path, &render_coding(&data))?;
+    
+    let status = option_to_js_string(get_path(&data, &["status"]));
+    let files_len = get_path(&data, &["changed_files"]).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    
+    println!("Coding completed: {}", output_path);
+    println!("Status: {}", status);
+    println!("Changed files: {}", files_len);
+    println!("Next: cflow verify --task current");
+    
+    Ok(())
+}
+
+fn command_agent(args: &[String]) -> CflowResult<()> {
+    if args.is_empty() {
+        return Err("Usage: cflow agent plan|coding [--task current]".to_string());
+    }
+    
+    match args[0].as_str() {
+        "plan" => command_agent_plan(&args[1..]),
+        "coding" => command_agent_coding(&args[1..]),
+        _ => Err(format!("Unknown agent command: {}", args[0])),
+    }
+}
+
 fn command_new(args: &[String]) -> CflowResult<()> {
     let name = args.first().cloned().unwrap_or_default();
     if name.is_empty() {
@@ -514,6 +662,19 @@ fn command_plan(args: &[String]) -> CflowResult<()> {
     Ok(())
 }
 
+fn command_coding(args: &[String]) -> CflowResult<()> {
+    let task_path = resolve_task(args)?;
+    if !Path::new(&task_path).exists() {
+        return Err(format!("Task folder does not exist: {}", task_path));
+    }
+    let output = format!("{}/CODING.md", task_path);
+    let data = read_json_input(args)?;
+    validate_coding(&data)?;
+    write_text(&output, &render_coding(&data))?;
+    println!("created {}", output);
+    Ok(())
+}
+
 fn command_verify(args: &[String]) -> CflowResult<()> {
     let task_path = resolve_task(args)?;
     if !Path::new(&task_path).exists() {
@@ -539,6 +700,10 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
     let verify_path = format!("{}/VERIFY.md", task_path);
     if !Path::new(&verify_path).exists() {
         return Err("Ship rejected: VERIFY.md chưa tồn tại trong task folder".to_string());
+    }
+    let coding_path = format!("{}/CODING.md", task_path);
+    if !Path::new(&coding_path).exists() {
+        println!("Warning: CODING.md is missing.");
     }
     let output = format!("{}/SHIP.md", task_path);
     let data = read_json_input(args)?;
@@ -608,7 +773,7 @@ fn command_status() {
     println!("Path: .coding/{}", current_task);
     println!("Artifacts:");
     
-    let files = ["REQUEST.md", "PLAN.md", "VERIFY.md", "SHIP.md"];
+    let files = ["REQUEST.md", "PLAN.md", "CODING.md", "VERIFY.md", "SHIP.md"];
     for file in files {
         let file_path = format!(".coding/{}/{}", current_task, file);
         let status = if Path::new(&file_path).exists() { "exists" } else { "missing" };
@@ -623,6 +788,9 @@ fn print_usage() {
   cflow new \"<task-name>\"
   cflow request [--task current] [--input file]
   cflow plan    [--task current] [--input file]
+  cflow coding  [--task current] [--input file]
+  cflow agent plan   [--task current]
+  cflow agent coding [--task current]
   cflow verify  [--task current] [--input file]
   cflow ship    [--task current] [--input file] [--dry-run|--commit]
   cflow status
@@ -647,6 +815,8 @@ fn run() -> CflowResult<()> {
         Some("new") => command_new(&raw_args),
         Some("request") => command_request(&raw_args),
         Some("plan") => command_plan(&raw_args),
+        Some("coding") => command_coding(&raw_args),
+        Some("agent") => command_agent(&raw_args),
         Some("verify") => command_verify(&raw_args),
         Some("ship") => command_ship(&raw_args),
         Some("status") => {
