@@ -14,9 +14,10 @@ cat <<'JSON' | node ../bin/cflow verify --task current
     "Verified copy button appears on documentation code blocks.",
     "Verified clipboard copy works in browser."
   ],
-  "regressions_checked": [
+  "acceptance_criteria_checked": [
     "Existing code block rendering still works."
   ],
+  "findings": [],
   "known_issues": [],
   "done_criteria_verified": [
     "Copy button appears on documentation code blocks.",

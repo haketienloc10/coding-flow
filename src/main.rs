@@ -26,11 +26,26 @@ const REQUEST_NEXT_ACTIONS: &[&str] = &["answer", "clarify", "investigate", "pla
 
 const STEP_STATUSES: &[&str] = &["todo", "in_progress", "done", "blocked"];
 
+const CODING_MODES: &[&str] = &["initial", "fix"];
+
 const CODING_STATUSES: &[&str] = &["ready_for_verify", "blocked", "partial", "failed"];
 
 const CODING_NEXT_ACTIONS: &[&str] = &["verify", "plan", "clarify", "none"];
 
 const VERIFY_STATUSES: &[&str] = &["passed", "failed", "partial", "skipped"];
+
+const FINDING_SEVERITIES: &[&str] = &["low", "medium", "high", "blocking"];
+
+const FINDING_TYPES: &[&str] = &[
+    "acceptance_mismatch",
+    "test_failure",
+    "runtime_error",
+    "copy_mismatch",
+    "ui_mismatch",
+    "regression",
+    "missing_behavior",
+    "other",
+];
 
 const COMMIT_TYPES: &[&str] = &[
     "feat", "fix", "refactor", "docs", "test", "chore", "ci", "build", "perf",
@@ -235,19 +250,6 @@ fn first_non_empty_section_line(content: &str, heading: &str) -> Option<String> 
         .map(str::to_string)
 }
 
-fn section_has_findings(content: &str, heading: &str) -> bool {
-    let Some(section) = markdown_section(content, heading) else {
-        return false;
-    };
-
-    section.into_iter().map(str::trim).any(|line| {
-        !line.is_empty()
-            && line != "- _None_"
-            && line != "_None_"
-            && !line.eq_ignore_ascii_case("none")
-    })
-}
-
 fn parse_ship_commit_message(content: &str) -> Option<String> {
     let section = markdown_section(content, "Commit Message")?;
     let mut in_fence = false;
@@ -285,6 +287,13 @@ fn require_field(value: Option<&Value>, name: &str) -> CflowResult<()> {
         Err(format!("Missing or empty required field: {name}"))
     } else {
         Ok(())
+    }
+}
+
+fn require_present(value: Option<&Value>, name: &str) -> CflowResult<()> {
+    match value {
+        None | Some(Value::Null) => Err(format!("Missing required field: {name}")),
+        Some(_) => Ok(()),
     }
 }
 
@@ -348,6 +357,67 @@ fn list(items: Option<&Value>) -> String {
                 }
             }
             _ => format!("- {}", value_to_js_string(item)),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn finding_ids_from_markdown(content: &str) -> Vec<String> {
+    let Some(section) = markdown_section(content, "Findings") else {
+        return Vec::new();
+    };
+
+    section
+        .into_iter()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let rest = trimmed.strip_prefix("- [")?;
+            let (id, _) = rest.split_once(']')?;
+            if id.trim().is_empty() {
+                None
+            } else {
+                Some(id.trim().to_string())
+            }
+        })
+        .collect()
+}
+
+fn verify_findings_count(content: &str) -> usize {
+    finding_ids_from_markdown(content).len()
+}
+
+fn render_findings(items: Option<&Value>) -> String {
+    let Some(Value::Array(items)) = items else {
+        return "- _None_".to_string();
+    };
+
+    if items.is_empty() {
+        return "- _None_".to_string();
+    }
+
+    items
+        .iter()
+        .map(|item| {
+            let Value::Object(map) = item else {
+                return format!("- {}", value_to_js_string(item));
+            };
+
+            let suggested_fix = if is_truthy(map.get("suggested_fix")) {
+                option_to_js_string(map.get("suggested_fix"))
+            } else {
+                "_None_".to_string()
+            };
+
+            format!(
+                "- [{}] {}\n  - Severity: {}\n  - Expected: {}\n  - Actual: {}\n  - Evidence: {}\n  - Suggested fix: {}",
+                option_to_js_string(map.get("id")),
+                option_to_js_string(map.get("type")),
+                option_to_js_string(map.get("severity")),
+                option_to_js_string(map.get("expected")),
+                option_to_js_string(map.get("actual")),
+                option_to_js_string(map.get("evidence")),
+                suggested_fix
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -423,20 +493,116 @@ fn validate_plan(data: &Value) -> CflowResult<()> {
 }
 
 fn validate_coding(data: &Value) -> CflowResult<()> {
+    require_field(get_path(data, &["mode"]), "mode")?;
     require_field(get_path(data, &["status"]), "status")?;
-    require_field(get_path(data, &["summary"]), "summary")?;
-    require_field(get_path(data, &["changed_files"]), "changed_files")?;
+    require_present(get_path(data, &["summary"]), "summary")?;
+    require_present(get_path(data, &["fixed_findings"]), "fixed_findings")?;
+    require_present(get_path(data, &["changed_files"]), "changed_files")?;
+    require_present(get_path(data, &["notes"]), "notes")?;
     require_field(get_path(data, &["next"]), "next")?;
 
+    assert_allowed(get_path(data, &["mode"]), CODING_MODES, "mode")?;
     assert_allowed(get_path(data, &["status"]), CODING_STATUSES, "status")?;
     assert_allowed(get_path(data, &["next"]), CODING_NEXT_ACTIONS, "next")?;
+
+    if option_to_js_string(get_path(data, &["status"])) == "ready_for_verify"
+        && option_to_js_string(get_path(data, &["next"])) != "verify"
+    {
+        return Err("Invalid coding: status=ready_for_verify expects next=verify".to_string());
+    }
+
+    Ok(())
+}
+
+fn validate_coding_for_task(data: &Value, task_path: &str) -> CflowResult<()> {
+    validate_coding(data)?;
+
+    if option_to_js_string(get_path(data, &["mode"])) != "fix" {
+        return Ok(());
+    }
+
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    if !Path::new(&verify_path).exists() {
+        return Err("Invalid coding: mode=fix requires latest VERIFY.md".to_string());
+    }
+
+    let verify_md = fs::read_to_string(&verify_path).map_err(|error| error.to_string())?;
+    let finding_ids = finding_ids_from_markdown(&verify_md);
+    let Some(Value::Array(fixed_findings)) = get_path(data, &["fixed_findings"]) else {
+        return Err("Invalid coding: fixed_findings must be an array".to_string());
+    };
+
+    for fixed in fixed_findings {
+        let fixed = value_to_js_string(fixed);
+        if !finding_ids.iter().any(|id| id == &fixed) {
+            return Err(format!(
+                "Invalid coding: fixed_findings references unknown VERIFY.md finding id {fixed}"
+            ));
+        }
+    }
 
     Ok(())
 }
 
 fn validate_verify(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["status"]), "status")?;
-    assert_allowed(get_path(data, &["status"]), VERIFY_STATUSES, "status")
+    require_present(get_path(data, &["checks"]), "checks")?;
+    require_present(get_path(data, &["manual_checks"]), "manual_checks")?;
+    require_present(
+        get_path(data, &["acceptance_criteria_checked"]),
+        "acceptance_criteria_checked",
+    )?;
+    require_present(get_path(data, &["findings"]), "findings")?;
+    require_present(get_path(data, &["known_issues"]), "known_issues")?;
+    require_present(
+        get_path(data, &["done_criteria_verified"]),
+        "done_criteria_verified",
+    )?;
+
+    assert_allowed(get_path(data, &["status"]), VERIFY_STATUSES, "status")?;
+
+    let status = option_to_js_string(get_path(data, &["status"]));
+    let findings = get_path(data, &["findings"])
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Invalid verify: findings must be an array".to_string())?;
+
+    if status == "passed" && !findings.is_empty() {
+        return Err("Invalid verify: status=passed requires findings to be empty".to_string());
+    }
+
+    if (status == "failed" || status == "partial") && findings.is_empty() {
+        return Err("Invalid verify: status=failed or partial requires findings".to_string());
+    }
+
+    for (index, finding) in findings.iter().enumerate() {
+        require_field(finding.get("id"), &format!("findings[{index}].id"))?;
+        require_field(
+            finding.get("severity"),
+            &format!("findings[{index}].severity"),
+        )?;
+        require_field(finding.get("type"), &format!("findings[{index}].type"))?;
+        require_field(
+            finding.get("expected"),
+            &format!("findings[{index}].expected"),
+        )?;
+        require_field(finding.get("actual"), &format!("findings[{index}].actual"))?;
+        require_field(
+            finding.get("evidence"),
+            &format!("findings[{index}].evidence"),
+        )?;
+        assert_allowed(
+            finding.get("severity"),
+            FINDING_SEVERITIES,
+            &format!("findings[{index}].severity"),
+        )?;
+        assert_allowed(
+            finding.get("type"),
+            FINDING_TYPES,
+            &format!("findings[{index}].type"),
+        )?;
+    }
+
+    Ok(())
 }
 
 fn validate_ship(data: &Value) -> CflowResult<()> {
@@ -510,9 +676,11 @@ fn render_plan(data: &Value) -> String {
 
 fn render_coding(data: &Value) -> String {
     format!(
-        "# Coding\n\n## Status\n\n{}\n\n## Summary\n\n{}\n\n## Changed Files\n\n{}\n\n## Notes\n\n{}\n\n## Next\n\n{}\n",
+        "# Coding\n\n## Mode\n\n{}\n\n## Status\n\n{}\n\n## Summary\n\n{}\n\n## Fixed Findings\n\n{}\n\n## Changed Files\n\n{}\n\n## Notes\n\n{}\n\n## Next\n\n{}\n",
+        option_to_js_string(get_path(data, &["mode"])),
         option_to_js_string(get_path(data, &["status"])),
         list(get_path(data, &["summary"])),
+        list(get_path(data, &["fixed_findings"])),
         list(get_path(data, &["changed_files"])),
         list(get_path(data, &["notes"])),
         option_to_js_string(get_path(data, &["next"]))
@@ -521,11 +689,12 @@ fn render_coding(data: &Value) -> String {
 
 fn render_verify(data: &Value) -> String {
     format!(
-        "# Verify\n\n## Status\n\n{}\n\n## Automated Checks\n\n{}\n\n## Manual Checks\n\n{}\n\n## Regressions Checked\n\n{}\n\n## Known Issues\n\n{}\n\n## Done Criteria Verified\n\n{}\n",
+        "# Verify\n\n## Status\n\n{}\n\n## Automated Checks\n\n{}\n\n## Manual Checks\n\n{}\n\n## Acceptance Criteria Checked\n\n{}\n\n## Findings\n\n{}\n\n## Known Issues\n\n{}\n\n## Done Criteria Verified\n\n{}\n",
         option_to_js_string(get_path(data, &["status"])),
         list(get_path(data, &["checks"])),
         list(get_path(data, &["manual_checks"])),
-        list(get_path(data, &["regressions_checked"])),
+        list(get_path(data, &["acceptance_criteria_checked"])),
+        render_findings(get_path(data, &["findings"])),
         list(get_path(data, &["known_issues"])),
         list(get_path(data, &["done_criteria_verified"]))
     )
@@ -635,6 +804,22 @@ fn run_agent(prompt: &str) -> CflowResult<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn agent_json_payload(stdout: &str) -> &str {
+    let json_str = stdout.trim();
+    if json_str.contains("```json") {
+        json_str
+            .split("```json")
+            .nth(1)
+            .unwrap_or(json_str)
+            .split("```")
+            .next()
+            .unwrap_or(json_str)
+            .trim()
+    } else {
+        json_str
+    }
+}
+
 fn command_agent_plan(args: &[String]) -> CflowResult<()> {
     let task_path = resolve_task(args)?;
     let request_path = format!("{}/REQUEST.md", task_path);
@@ -653,19 +838,7 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
 
     let stdout = run_agent(&prompt)?;
 
-    let json_str = stdout.trim();
-    let json_str = if json_str.contains("```json") {
-        json_str
-            .split("```json")
-            .nth(1)
-            .unwrap_or(json_str)
-            .split("```")
-            .next()
-            .unwrap_or(json_str)
-            .trim()
-    } else {
-        json_str
-    };
+    let json_str = agent_json_payload(&stdout);
 
     let data: Value = serde_json::from_str(json_str).map_err(|e| {
         format!(
@@ -705,28 +878,42 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
         ));
     }
 
+    let fix_mode = has_flag(args, "--fix");
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    let coding_path = format!("{}/CODING.md", task_path);
+
+    if fix_mode && !Path::new(&verify_path).exists() {
+        return Err("Coding fix rejected: VERIFY.md is missing".to_string());
+    }
+
     let plan_md = fs::read_to_string(&plan_path).map_err(|e| e.to_string())?;
+    let verify_md = if fix_mode {
+        Some(fs::read_to_string(&verify_path).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let existing_coding_md = if fix_mode && Path::new(&coding_path).exists() {
+        Some(fs::read_to_string(&coding_path).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
     let skill_path = "skills/agent-coding.md";
     let skill = fs::read_to_string(skill_path)
         .unwrap_or_else(|_| "Implement and provide JSON coding summary.".to_string());
 
-    let prompt = format!("{}\n\n# Current PLAN.md\n\n{}", skill, plan_md);
+    let prompt = if fix_mode {
+        format!(
+            "{skill}\n\n# Mode\n\nfix\n\n# Fix Instructions\n\n- Do not re-plan.\n- Do not broaden scope.\n- Fix only findings from VERIFY.md.\n- Preserve already-correct work.\n- Return coding JSON only.\n- Do not edit {task_path}/*.md artifacts.\n- Do not verify.\n- Do not ship.\n- Do not commit.\n\n# Current PLAN.md\n\n{plan_md}\n\n# Latest VERIFY.md\n\n{}\n\n# Existing CODING.md\n\n{}",
+            verify_md.as_deref().unwrap_or(""),
+            existing_coding_md.as_deref().unwrap_or("_None_")
+        )
+    } else {
+        format!("{skill}\n\n# Mode\n\ninitial\n\n# Current PLAN.md\n\n{plan_md}")
+    };
 
     let stdout = run_agent(&prompt)?;
 
-    let json_str = stdout.trim();
-    let json_str = if json_str.contains("```json") {
-        json_str
-            .split("```json")
-            .nth(1)
-            .unwrap_or(json_str)
-            .split("```")
-            .next()
-            .unwrap_or(json_str)
-            .trim()
-    } else {
-        json_str
-    };
+    let json_str = agent_json_payload(&stdout);
 
     let data: Value = serde_json::from_str(json_str).map_err(|e| {
         format!(
@@ -735,19 +922,32 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
         )
     })?;
 
-    validate_coding(&data)?;
+    validate_coding_for_task(&data, &task_path)?;
     let output_path = format!("{}/CODING.md", task_path);
     write_text(&output_path, &render_coding(&data))?;
 
+    let mode = option_to_js_string(get_path(&data, &["mode"]));
     let status = option_to_js_string(get_path(&data, &["status"]));
     let files_len = get_path(&data, &["changed_files"])
         .and_then(|v| v.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
+    let fixed_len = get_path(&data, &["fixed_findings"])
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
 
-    println!("Coding completed: {}", output_path);
-    println!("Status: {}", status);
-    println!("Changed files: {}", files_len);
+    if fix_mode {
+        println!("Coding fix completed: {}", output_path);
+        println!("Mode: {}", mode);
+        println!("Fixed findings: {}", fixed_len);
+        println!("Status: {}", status);
+    } else {
+        println!("Coding completed: {}", output_path);
+        println!("Mode: {}", mode);
+        println!("Status: {}", status);
+        println!("Changed files: {}", files_len);
+    }
     println!("Next: cflow verify --task current");
 
     Ok(())
@@ -755,7 +955,7 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
 
 fn command_agent(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
-        return Err("Usage: cflow agent plan|coding [--task current]".to_string());
+        return Err("Usage: cflow agent plan|coding [--task current] [--fix]".to_string());
     }
 
     match args[0].as_str() {
@@ -830,7 +1030,7 @@ fn command_coding(args: &[String]) -> CflowResult<()> {
     }
     let output = format!("{}/CODING.md", task_path);
     let data = read_json_input(args)?;
-    validate_coding(&data)?;
+    validate_coding_for_task(&data, &task_path)?;
     write_text(&output, &render_coding(&data))?;
     println!("created {}", output);
     Ok(())
@@ -869,8 +1069,7 @@ fn ensure_verify_passed_for_ship(task_path: &str) -> CflowResult<()> {
         ));
     }
 
-    if section_has_findings(&content, "Known Issues") || section_has_findings(&content, "Findings")
-    {
+    if verify_findings_count(&content) > 0 {
         return Err("Ship rejected: VERIFY.md has findings".to_string());
     }
 
@@ -894,7 +1093,6 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
             println!("SHIP.md already exists.");
             println!("Next options:");
             println!("- cflow ship --task current --dry-run");
-            println!("- cflow ship --task current --commit");
         } else {
             println!("SHIP.md does not exist.");
             println!("Provide ship JSON via stdin or --input to create it.");
@@ -943,7 +1141,7 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
     }
 
     if !dry_run && !commit {
-        println!("ship artifact created. use --dry-run or --commit for git actions.");
+        println!("ship artifact created. use --dry-run for git status.");
     }
 
     Ok(())
@@ -973,12 +1171,35 @@ fn command_status() {
         };
         println!("- {}: {}", file, status);
     }
+
+    let task_path = format!(".coding/{}", current_task);
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    if Path::new(&verify_path).exists() {
+        let content = fs::read_to_string(&verify_path).unwrap_or_default();
+        let status = first_non_empty_section_line(&content, "Status")
+            .unwrap_or_else(|| "unknown".to_string());
+        println!();
+        println!("Verify:");
+        println!("- Status: {}", status);
+        println!("- Findings: {}", verify_findings_count(&content));
+    }
+
+    let next = determine_next_action(&task_path);
+    println!();
+    println!("Next:");
+    println!("- {}", next.command);
 }
 
 fn get_verify_status(task_path: &str) -> Option<String> {
     let verify_path = format!("{}/VERIFY.md", task_path);
     let content = fs::read_to_string(&verify_path).ok()?;
     first_non_empty_section_line(&content, "Status")
+}
+
+fn get_verify_findings_count(task_path: &str) -> Option<usize> {
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    let content = fs::read_to_string(&verify_path).ok()?;
+    Some(verify_findings_count(&content))
 }
 
 struct NextAction {
@@ -995,43 +1216,59 @@ fn determine_next_action(task_path: &str) -> NextAction {
 
     if !req {
         NextAction {
-            command: "request".to_string(),
+            command: "cflow request --task current".to_string(),
             reason: "REQUEST.md is missing".to_string(),
         }
     } else if !plan {
         NextAction {
-            command: "agent plan".to_string(),
+            command: "cflow agent plan --task current".to_string(),
             reason: "PLAN.md is missing".to_string(),
         }
     } else if !coding {
         NextAction {
-            command: "agent coding".to_string(),
+            command: "cflow agent coding --task current".to_string(),
             reason: "CODING.md is missing".to_string(),
         }
     } else if !verify {
         NextAction {
-            command: "verify".to_string(),
+            command: "cflow verify --task current".to_string(),
             reason: "VERIFY.md is missing".to_string(),
         }
     } else {
         let status = get_verify_status(task_path).unwrap_or_default();
-        if status == "passed" {
-            if !ship {
-                NextAction {
-                    command: "ship --dry-run".to_string(),
-                    reason: "VERIFY.md exists and status is passed and SHIP.md missing".to_string(),
-                }
-            } else {
-                NextAction {
-                    command: "done or commit pending".to_string(),
-                    reason: "SHIP.md exists".to_string(),
-                }
-            }
-        } else {
-            NextAction {
-                command: "fix or verify again".to_string(),
+        match status.as_str() {
+            "failed" | "partial" => NextAction {
+                command: "cflow agent coding --task current --fix".to_string(),
                 reason: format!("VERIFY.md status is {}", status),
+            },
+            "skipped" => NextAction {
+                command: "cflow verify --task current".to_string(),
+                reason: "VERIFY.md status is skipped".to_string(),
+            },
+            "passed" => {
+                let findings_count = get_verify_findings_count(task_path).unwrap_or(0);
+                if findings_count > 0 {
+                    NextAction {
+                        command: "cflow agent coding --task current --fix".to_string(),
+                        reason: format!("VERIFY.md has {} findings", findings_count),
+                    }
+                } else if !ship {
+                    NextAction {
+                        command: "cflow ship --task current --dry-run".to_string(),
+                        reason: "VERIFY.md exists and status is passed and SHIP.md missing"
+                            .to_string(),
+                    }
+                } else {
+                    NextAction {
+                        command: "done or commit pending".to_string(),
+                        reason: "SHIP.md exists".to_string(),
+                    }
+                }
             }
+            _ => NextAction {
+                command: "cflow verify --task current".to_string(),
+                reason: format!("VERIFY.md status is {}", status),
+            },
         }
     }
 }
@@ -1051,7 +1288,7 @@ fn command_run(args: &[String]) -> CflowResult<()> {
         let next = determine_next_action(&task_path);
 
         match next.command.as_str() {
-            "agent plan" => {
+            "cflow agent plan --task current" => {
                 println!("Next: {}", next.command);
                 println!("Reason: {}", next.reason);
                 println!("--- Running: {} ---", next.command);
@@ -1062,7 +1299,7 @@ fn command_run(args: &[String]) -> CflowResult<()> {
                 ];
                 command_agent(&current_args)?;
             }
-            "agent coding" => {
+            "cflow agent coding --task current" => {
                 println!("Next: {}", next.command);
                 println!("Reason: {}", next.reason);
                 println!("--- Running: {} ---", next.command);
@@ -1073,7 +1310,20 @@ fn command_run(args: &[String]) -> CflowResult<()> {
                 ];
                 command_agent(&current_args)?;
             }
-            "ship --dry-run" => {
+            "cflow agent coding --task current --fix" => {
+                println!("Next: {}", next.command);
+                println!("Reason: {}", next.reason);
+                println!("--- Running: {} ---", next.command);
+                let current_args = vec![
+                    "coding".to_string(),
+                    "--task".to_string(),
+                    "current".to_string(),
+                    "--fix".to_string(),
+                ];
+                command_agent(&current_args)?;
+                break;
+            }
+            "cflow ship --task current --dry-run" => {
                 println!("Next: {}", next.command);
                 println!("Reason: {}", next.reason);
                 println!("--- Running: {} ---", next.command);
@@ -1102,7 +1352,7 @@ fn print_usage() {
   cflow plan    [--task current] [--input file]
   cflow coding  [--task current] [--input file]
   cflow agent plan   [--task current]
-  cflow agent coding [--task current]
+  cflow agent coding [--task current] [--fix]
   cflow verify  [--task current] [--input file]
   cflow ship    [--task current] [--input file] [--dry-run|--commit]
   cflow status
@@ -1163,6 +1413,18 @@ mod tests {
         serde_json::from_str(input).expect("fixture should be valid JSON")
     }
 
+    fn test_task_dir(name: &str) -> String {
+        let path = env::temp_dir().join(format!(
+            "cflow-test-{}-{}",
+            name,
+            chrono::Local::now()
+                .timestamp_nanos_opt()
+                .unwrap_or_default()
+        ));
+        fs::create_dir_all(&path).expect("test dir should be created");
+        path.to_string_lossy().into_owned()
+    }
+
     #[test]
     fn validates_and_renders_request_example() {
         let data = parse_json(include_str!("../examples/request.json"));
@@ -1197,6 +1459,39 @@ mod tests {
     }
 
     #[test]
+    fn next_failed_verify_routes_to_agent_coding_fix() {
+        let task_path = test_task_dir("next-failed-verify");
+        write_text(&format!("{}/REQUEST.md", task_path), "# Request\n").unwrap();
+        write_text(&format!("{}/PLAN.md", task_path), "# Plan\n").unwrap();
+        write_text(&format!("{}/CODING.md", task_path), "# Coding\n").unwrap();
+        write_text(
+            &format!("{}/VERIFY.md", task_path),
+            "# Verify\n\n## Status\n\nfailed\n\n## Findings\n\n- [F001] copy_mismatch\n  - Severity: high\n",
+        )
+        .unwrap();
+
+        let next = determine_next_action(&task_path);
+
+        assert_eq!(next.command, "cflow agent coding --task current --fix");
+    }
+
+    #[test]
+    fn ship_gate_rejects_passed_verify_with_findings() {
+        let task_path = test_task_dir("ship-findings");
+        write_text(
+            &format!("{}/VERIFY.md", task_path),
+            "# Verify\n\n## Status\n\npassed\n\n## Findings\n\n- [F001] copy_mismatch\n  - Severity: high\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            ensure_verify_passed_for_ship(&task_path)
+                .expect_err("ship should reject findings in VERIFY.md"),
+            "Ship rejected: VERIFY.md has findings"
+        );
+    }
+
+    #[test]
     fn parses_commit_message_from_ship_markdown_fence() {
         let rendered = render_ship(&parse_json(include_str!("../examples/ship.json")));
 
@@ -1207,16 +1502,16 @@ mod tests {
     }
 
     #[test]
-    fn verify_known_issues_section_counts_as_findings() {
-        let verify = "# Verify\n\n## Status\n\npassed\n\n## Known Issues\n\n- Follow-up needed\n";
+    fn counts_structured_verify_findings() {
+        let verify = "# Verify\n\n## Status\n\nfailed\n\n## Findings\n\n- [F001] copy_mismatch\n  - Severity: high\n";
 
-        assert!(section_has_findings(verify, "Known Issues"));
+        assert_eq!(verify_findings_count(verify), 1);
     }
 
     #[test]
-    fn verify_none_section_has_no_findings() {
-        let verify = "# Verify\n\n## Status\n\npassed\n\n## Known Issues\n\n- _None_\n";
+    fn verify_none_findings_section_has_no_findings() {
+        let verify = "# Verify\n\n## Status\n\npassed\n\n## Findings\n\n- _None_\n";
 
-        assert!(!section_has_findings(verify, "Known Issues"));
+        assert_eq!(verify_findings_count(verify), 0);
     }
 }

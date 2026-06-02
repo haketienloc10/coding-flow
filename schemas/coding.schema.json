@@ -1,12 +1,20 @@
 {
   "type": "object",
-  "required": ["status", "summary", "changed_files", "notes", "next"],
+  "required": ["mode", "status", "summary", "fixed_findings", "changed_files", "notes", "next"],
   "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["initial", "fix"]
+    },
     "status": {
       "type": "string",
       "enum": ["ready_for_verify", "blocked", "partial", "failed"]
     },
     "summary": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "fixed_findings": {
       "type": "array",
       "items": { "type": "string" }
     },
@@ -23,5 +31,11 @@
       "enum": ["verify", "plan", "clarify", "none"]
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "ready_for_verify" } } },
+      "then": { "properties": { "next": { "const": "verify" } } }
+    }
+  ],
   "additionalProperties": false
 }

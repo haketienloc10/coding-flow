@@ -35,3 +35,21 @@ request -> plan -> coding -> verify -> ship
 * Do not ship unless `VERIFY.md` exists and verification status is `passed`.
 * Use `--dry-run` before `--commit`.
 * Commit only when the user explicitly asks to commit.
+
+## Coding / Verify Loop
+
+If verification fails, do not fix code in the main context.
+
+Use this loop:
+
+```text
+CODING.md -> VERIFY.md -> agent coding --fix -> VERIFY.md
+```
+
+Rules:
+
+* Verify records findings only.
+* Main does not implement fixes.
+* Use `cflow agent coding --task current --fix` to fix findings.
+* Re-run verify after each fix.
+* Ship only when verify is `passed`.

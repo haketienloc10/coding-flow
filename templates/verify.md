@@ -12,9 +12,13 @@
 
 {{manual_checks}}
 
-## Regressions Checked
+## Acceptance Criteria Checked
 
-{{regressions_checked}}
+{{acceptance_criteria_checked}}
+
+## Findings
+
+{{findings}}
 
 ## Known Issues
 

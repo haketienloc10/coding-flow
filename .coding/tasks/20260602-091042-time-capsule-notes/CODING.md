@@ -1,12 +1,20 @@
 # Coding
 
+## Mode
+
+fix
+
 ## Status
 
 ready_for_verify
 
 ## Summary
 
-- Implemented focus garden MVP
+- Fixed Time Capsule Notes copy mismatch
+
+## Fixed Findings
+
+- F001
 
 ## Changed Files
 

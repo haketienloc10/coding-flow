@@ -25,8 +25,10 @@ Process coding JSON and render CODING.md.
 
 ```json
 {
+  "mode": "initial",
   "status": "ready_for_verify",
   "summary": [],
+  "fixed_findings": [],
   "changed_files": [],
   "notes": [],
   "next": "verify"

@@ -1,4 +1,4 @@
-# Coding Flow v0.4
+# Coding Flow v0.5
 
 Bộ workflow mỏng nhẹ cho coding task:
 
@@ -29,7 +29,8 @@ cat <<'JSON' | bin/cflow verify --task current
   "status": "passed",
   "checks": [],
   "manual_checks": ["Start/cancel/complete/reload tested"],
-  "regressions_checked": [],
+  "acceptance_criteria_checked": ["Garden persists after reload"],
+  "findings": [],
   "known_issues": [],
   "done_criteria_verified": ["Garden persists after reload"]
 }
