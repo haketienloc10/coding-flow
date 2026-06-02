@@ -469,3 +469,91 @@ Fix story resolution and state repair so packet-root stories are discoverable co
 Fixed in S02 by resolving story switch/list/status from packet state and extending state repair for packet stories.
 
 Resolved at: 2026-06-02T16:31:38.688764421+07:00
+
+## P015 - Intake command without JSON blocks plan-only requests
+
+Status: open  
+Severity: low  
+Area: workflow/intake  
+Detected by: codex / gpt-5 / `bin/cflow request --task current`  
+Phase: intake  
+Detected at: 2026-06-02T20:02:33.236828316+07:00  
+
+### Problem
+
+Running intake via `bin/cflow request --task current` for a plan-only conversation fails because the command requires JSON via stdin or --input.
+
+### Impact
+
+Agent cannot satisfy the run-intake-before-planning rule through the normal command path for conversational plan-only requests without creating a separate JSON artifact or ad hoc payload.
+
+### Fallback
+
+Performed manual intake by inspecting repository structure and src/main.rs before producing the plan.
+
+### Follow-up
+
+Consider adding an interactive/no-input intake mode or documented minimal JSON invocation for plan-only requests.
+
+### Links
+
+- `src/main.rs`
+- `AGENTS.md`
+
+## P016 - Invalid git status ignored-mode invocation
+
+Status: open  
+Severity: low  
+Area: agent/verification  
+Detected by: codex / gpt-5 / `git status --short --ignored=.coding/knowledge/PROBLEMS.md`  
+Phase: verify  
+Detected at: 2026-06-02T20:02:53.444556702+07:00  
+
+### Problem
+
+Agent attempted to pass a path to git status --ignored mode, which expects a mode value such as traditional, matching, or no.
+
+### Impact
+
+The intended worktree status check failed and had to be rerun with a valid command.
+
+### Fallback
+
+Use plain `git status --short` for status checks unless an ignored-mode value is explicitly needed.
+
+### Follow-up
+
+Avoid combining --ignored mode syntax with path filtering; use standard pathspec position after options if needed.
+
+### Links
+
+- _None_
+
+## P017 - Story plan JSON payload failed before schema-correct retry
+
+Status: open  
+Severity: low  
+Area: workflow/story-plan  
+Detected by: codex / gpt-5 / `bin/cflow story plan --story current`  
+Phase: plan  
+Detected at: 2026-06-02T20:10:02.208180522+07:00  
+
+### Problem
+
+The initial story plan command failed first with empty stdin from a combined switch-and-pipe shell command, then with a payload that did not satisfy the current plan schema shape.
+
+### Impact
+
+PLAN.md creation required retrying with a separately piped JSON payload using done_criteria.items and object-shaped implementation_steps.
+
+### Fallback
+
+Ran story switch separately and retried story plan with schema-compatible JSON stdin.
+
+### Follow-up
+
+Prefer separate shell invocations for state-changing workflow commands followed by piped JSON commands; keep a small valid plan JSON fixture handy.
+
+### Links
+
+- `.coding/packets/20260602-200549-main-module-extraction-rollout/stories/S01-lib-boundary/PLAN.md`

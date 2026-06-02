@@ -166,3 +166,35 @@ New command logic should read state.json first and write .coding/current only as
 
 ### Supersedes
 None
+
+## D-0006: Extract cflow binary through lib modules
+
+Status: proposed
+Date: 2026-06-02
+Agent: codex
+Related Problems: P015
+
+### Context
+src/main.rs is about 6.8k lines and mixes CLI routing, workflow state, validation/rendering, registries, agent execution, packet/story/task commands, next-action logic, and tests.
+
+### Decision
+Move behavior into a src/lib.rs module tree and reduce src/main.rs to process entrypoint wiring.
+
+### Options Considered
+- Keep modules under main.rs; create lib.rs with public module tree; rewrite command model around a CLI framework.
+
+### Tradeoffs
+Pros:
+- Improves testability
+- keeps extraction incremental
+- and allows cargo test to exercise shared library code without relying on binary-only internals.
+
+Cons:
+- Requires adjusting visibility and tests carefully
+- and public module boundaries must not expose more than needed.
+
+### Consequences
+Future extraction stories should move one coherent domain at a time behind crate-visible APIs while preserving CLI behavior and existing markdown artifacts.
+
+### Supersedes
+None

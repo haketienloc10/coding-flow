@@ -1,8 +1,8 @@
 {
   "version": 2,
   "current_task_id": null,
-  "current_packet_id": "20260602-160700-workflow-audit-priority-fixes",
-  "current_story_id": "S04-task-packet-model-unification-design",
+  "current_packet_id": "20260602-200549-main-module-extraction-rollout",
+  "current_story_id": "S01-lib-boundary",
   "tasks": {
     "20260602-113855-time-capsule-notes": {
       "title": "20260602-113855-time-capsule-notes",
@@ -236,6 +236,79 @@
           "ship_ready": true,
           "committed": false,
           "commit_sha": null
+        }
+      }
+    },
+    "20260602-200549-main-module-extraction-rollout": {
+      "title": "main module extraction rollout",
+      "status": "in_progress",
+      "phase": "split_done",
+      "lane": "normal",
+      "split_required": true,
+      "risk_flags": [
+        "large monolithic binary",
+        "many command domains share helpers",
+        "stateful workflow artifacts"
+      ],
+      "hard_gates": [],
+      "next_action": "packet_brief",
+      "created_at": "2026-06-02T20:05:49.365893686+07:00",
+      "updated_at": "2026-06-02T20:09:51.210120113+07:00",
+      "artifacts": {
+        "request": false,
+        "intake": true,
+        "packet": true,
+        "stories": true,
+        "packet_verify": false,
+        "packet_ship": false
+      },
+      "stories": {
+        "S01-lib-boundary": {
+          "title": "Introduce library boundary and thin main",
+          "status": "done",
+          "phase": "commit_pending",
+          "findings_count": 0,
+          "updated_at": "2026-06-02T20:09:51.210120113+07:00",
+          "verify_status": "passed",
+          "ship_ready": true,
+          "committed": false,
+          "commit_sha": null
+        },
+        "S02-common-helpers": {
+          "title": "Extract common argument filesystem and markdown helpers",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S03-state-module": {
+          "title": "Extract workflow state module",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S04-artifact-modules": {
+          "title": "Extract artifact validation and rendering modules",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S05-knowledge-modules": {
+          "title": "Extract problem and decision registries",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S06-agent-modules": {
+          "title": "Extract agent provider runner and JSON parsing",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S07-command-modules": {
+          "title": "Extract command domain modules",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
         }
       }
     }
