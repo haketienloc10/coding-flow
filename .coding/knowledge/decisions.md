@@ -129,3 +129,40 @@ A replacement proposal must enforce agent-first behavior before source edits beg
 
 ### Supersedes
 None
+
+## D-0005: Adopt state.json as canonical current workflow state
+
+Status: accepted
+Date: 2026-06-02
+Agent: codex
+Related Problems: None
+
+### Context
+Task, packet, and story commands currently share selection through state.json while .coding/current is still written and read by legacy task resolution. Removing .coding/current now would break existing scripts and task commands.
+
+### Decision
+Use .coding/state.json as the long-term source of truth for current_task_id, current_packet_id, current_story_id, and workflow metadata. Keep .coding/current as a mirrored legacy compatibility pointer during migration, and centralize compatibility reads and writes in follow-up implementation stories.
+
+### Options Considered
+- State.json canonical with .coding/current compatibility shim
+- Delete .coding/current immediately
+- Keep .coding/current as primary pointer
+- Split task and packet state forever
+
+### Tradeoffs
+Pros:
+- Preserves existing task behavior
+- Reduces packet/story/task ambiguity
+- Allows incremental migration with small stories
+- Keeps only state.json as persistent JSON
+
+Cons:
+- Requires temporary dual-write behavior
+- State repair must continue handling stale pointers
+- Deprecation messaging and tests need follow-up work
+
+### Consequences
+New command logic should read state.json first and write .coding/current only as a compatibility mirror. Follow-up stories should add a current-selection shim, normalize state repair and switch behavior, add deprecation messaging, and define the eventual removal conditions.
+
+### Supersedes
+None

@@ -159,6 +159,11 @@ fn save_state(state: &Value) -> CflowResult<()> {
     Ok(())
 }
 
+fn write_legacy_current_pointer(relative_path: &str) -> CflowResult<()> {
+    // .coding/state.json is the canonical current selection; this pointer is kept for legacy scripts.
+    write_text(".coding/current", relative_path)
+}
+
 fn extract_task_id(task_path: &str) -> String {
     let path = Path::new(task_path);
     let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
@@ -567,7 +572,7 @@ fn resolve_task(args: &[String]) -> CflowResult<String> {
             return Ok(format!(".coding/tasks/{}", id));
         }
         if !Path::new(".coding/current").exists() {
-            return Err("No current task. Run `cflow new \"<task-name>\"` first.".to_string());
+            return Err("No current task. Run `bin/cflow new \"<task-name>\"` first.".to_string());
         }
         let current_task = fs::read_to_string(".coding/current").map_err(|e| e.to_string())?;
         let current_task = current_task.trim();
@@ -3043,7 +3048,7 @@ fn resolve_packet(args: &[String]) -> CflowResult<String> {
         if let Some(id) = state["current_packet_id"].as_str() {
             return Ok(format!(".coding/packets/{}", id));
         }
-        Err("No current packet. Run `cflow packet new \"<title>\"` first.".to_string())
+        Err("No current packet. Run `bin/cflow packet new \"<title>\"` first.".to_string())
     } else if packet.starts_with(".coding/packets/") {
         Ok(packet)
     } else {
@@ -3055,7 +3060,7 @@ fn resolve_story_path(args: &[String]) -> CflowResult<(String, String)> {
     let state = load_state();
     let packet_id = match state["current_packet_id"].as_str() {
         Some(id) => id.to_string(),
-        None => return Err("No current packet. Run `cflow packet new` first.".to_string()),
+        None => return Err("No current packet. Run `bin/cflow packet new` first.".to_string()),
     };
 
     let story = get_arg(args, "--story", "current");
@@ -3064,7 +3069,7 @@ fn resolve_story_path(args: &[String]) -> CflowResult<(String, String)> {
             Some(id) => id.to_string(),
             None => {
                 return Err(
-                    "No current story. Use `cflow story switch <story-id>` first.".to_string(),
+                    "No current story. Use `bin/cflow story switch <story-id>` first.".to_string(),
                 )
             }
         }
@@ -3847,7 +3852,7 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
 
     state["packets"][&next_pkt_id] = Value::Object(packet_meta);
     save_state(&state)?;
-    write_text(".coding/current", &packet_path)?;
+    write_legacy_current_pointer(&packet_path)?;
 
     println!("Packet created: {}", next_pkt_id);
     println!("Path: {}", full_path);
@@ -4013,7 +4018,7 @@ fn command_packet_new(args: &[String]) -> CflowResult<()> {
     state["packets"][&packet_id] = Value::Object(packet_meta);
     save_state(&state)?;
 
-    write_text(".coding/current", &packet_path)?;
+    write_legacy_current_pointer(&packet_path)?;
 
     println!("Packet created: {}", packet_id);
     println!("Path: {}", full_path);
@@ -4351,7 +4356,7 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
         save_state(&state)?;
 
         let story_dir = format!("packets/{}/stories/{}", packet_id, story_id);
-        write_text(".coding/current", &story_dir)?;
+        write_legacy_current_pointer(&story_dir)?;
 
         println!("Switched to story: {}", story_id);
         return Ok(());
@@ -4394,7 +4399,7 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
         "packets/{}/stories/{}",
         matched_story.packet, matched_story.id
     );
-    write_text(".coding/current", &story_dir)?;
+    write_legacy_current_pointer(&story_dir)?;
 
     println!("Switched to story: {}", matched_story.id);
     Ok(())
@@ -4557,7 +4562,7 @@ fn command_new(args: &[String]) -> CflowResult<()> {
 
     update_task_state(&task_id, Some("new"), Some(&name))?;
 
-    write_text(".coding/current", &task_path)?;
+    write_legacy_current_pointer(&task_path)?;
 
     println!("Task created: {}", task_id);
     println!("Path: {}", full_path);
@@ -4827,7 +4832,7 @@ fn command_status() {
                             "Warning: .coding/current points to '{}' but state.json points to '{}'.",
                             current_content, expected
                         );
-                        println!("Suggest running `cflow state repair`.");
+                        println!("Suggest running `bin/cflow state repair`.");
                     }
                 }
 
@@ -4845,9 +4850,9 @@ fn command_status() {
     if current_task_id.is_empty() {
         if Path::new(".coding/current").exists() {
             println!("Warning: .coding/current exists but state.json is missing or lacks current_task_id.");
-            println!("Suggest running `cflow state repair`.");
+            println!("Suggest running `bin/cflow state repair`.");
         } else {
-            println!("No current task. Run `cflow new \"<task-name>\"` first.");
+            println!("No current task. Run `bin/cflow new \"<task-name>\"` first.");
         }
         return;
     }
@@ -4863,7 +4868,7 @@ fn command_status() {
                 "Warning: Task metadata for '{}' not found in state.json.",
                 current_task_id
             );
-            println!("Suggest running `cflow state repair`.");
+            println!("Suggest running `bin/cflow state repair`.");
             return;
         }
     };
@@ -4885,7 +4890,7 @@ fn command_status() {
                 "Warning: .coding/current points to '{}' but state.json points to '{}'.",
                 current_content, expected
             );
-            println!("Suggest running `cflow state repair`.");
+            println!("Suggest running `bin/cflow state repair`.");
         }
     }
 
@@ -4961,7 +4966,7 @@ fn command_status() {
     if disagree {
         println!();
         println!(
-            "Warning: State file and filesystem disagree. Suggest running `cflow state repair`."
+            "Warning: State file and filesystem disagree. Suggest running `bin/cflow state repair`."
         );
     }
 }
@@ -5032,7 +5037,7 @@ fn command_switch(args: &[String]) -> CflowResult<()> {
     state["current_story_id"] = Value::Null;
     save_state(&state)?;
 
-    let _ = write_text(".coding/current", &format!("tasks/{}", task_id));
+    let _ = write_legacy_current_pointer(&format!("tasks/{}", task_id));
 
     println!("Switched to task: {}", task_id);
     Ok(())
@@ -5716,7 +5721,7 @@ fn run() -> CflowResult<()> {
             if raw_args.first().map(|s| s.as_str()) == Some("repair") {
                 command_state_repair()
             } else {
-                Err("Unknown state command. Did you mean `cflow state repair`?".to_string())
+                Err("Unknown state command. Did you mean `bin/cflow state repair`?".to_string())
             }
         }
         Some("next") => command_next(&raw_args),

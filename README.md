@@ -2,6 +2,24 @@
 
 Bộ workflow mỏng nhẹ cho coding task:
 
+## Unified workflow model
+
+`cflow` có một model trạng thái thống nhất:
+
+- Request là input ban đầu để phân loại việc cần làm.
+- Task là luồng nhỏ, độc lập, phù hợp với Tiny Flow.
+- Packet là bundle thực thi hoặc handoff cho thay đổi trung bình/lớn/nguy cơ cao.
+- Story là lát cắt implementation nhỏ nằm trong packet.
+
+`.coding/state.json` là source of truth dài hạn cho current task, current packet, current story, metadata, và artifact presence. `.coding/current` chỉ còn là legacy compatibility pointer để các command hoặc script cũ vẫn resolve được `--task current` trong giai đoạn chuyển tiếp.
+
+Chính sách migration:
+
+- CLI tiếp tục ghi `.coding/current` khi switch task, packet, hoặc story để giữ backward compatibility.
+- Các command mới nên đọc `.coding/state.json` trước, chỉ fallback sang `.coding/current` khi cần hỗ trợ task legacy.
+- Không tạo packet tự động từ story hoặc request planning; packet chỉ được tạo khi gọi `packet new` hoặc `packet create`.
+- Không xóa `.coding/current` cho đến khi các command task legacy và tài liệu deprecation đã có một chu kỳ migration riêng.
+
 ## Tiny Flow (Task Flow)
 
 Dùng cho task nhỏ hoặc story-level.
@@ -78,11 +96,13 @@ cflow packet show PKT-0001
 
 - JSON chỉ là transient input.
 - CLI không lưu JSON.
-- Markdown trong `.coding/tasks/<task-id>/` là artifact chính.
+- Markdown trong `.coding/tasks/<task-id>/` và `.coding/packets/<packet-id>/stories/<story-id>/` là artifact chính.
+- `.coding/state.json` là persistent JSON duy nhất và là canonical workflow state.
+- `.coding/current` là legacy pointer, không phải source of truth mới.
 - Mỗi task có folder riêng nên không ghi đè task cũ.
 - Agent oneshot giúp main context không phải giữ toàn bộ plan/coding detail.
 - Agent stdout phải là JSON transient; `cflow` validate rồi render markdown.
-- Không lưu JSON output vào `.coding/`.
+- Không lưu JSON output vào `.coding/` ngoài `.coding/state.json`.
 
 ## Agent providers
 
@@ -279,7 +299,18 @@ Hoặc dùng launcher tương thích trong workspace:
 
 ## Task resolution
 
-bin/cflow` commands like `request`, `plan`, `coding`, `verify`, and `ship` can use `--task` to resolve which folder to use.
-- `--task current` (default): Uses the task specified in `.coding/current`.
+`bin/cflow` commands like `request`, `plan`, `coding`, `verify`, and `ship` can use `--task` to resolve which folder to use.
+- `--task current` (default): Uses `current_task_id` from `.coding/state.json`; if that is missing, falls back to `.coding/current` for legacy compatibility.
 - `--task <task-id>`: Uses `.coding/tasks/<task-id>`.
 - `--task .coding/tasks/<task-id>`: Uses the absolute or relative path directly.
+
+Story commands resolve through `current_packet_id` and `current_story_id` in `.coding/state.json`. Packet commands resolve through `current_packet_id`. `.coding/current` may still mirror these selections as `packets/<packet-id>` or `packets/<packet-id>/stories/<story-id>`, but new code should not treat that file as authoritative.
+
+## Follow-up migration stories
+
+Use these as the next implementation slices instead of folding the full architecture migration into one story:
+
+- Add a current-selection compatibility shim that centralizes reads/writes for task, packet, story, and `.coding/current`.
+- Normalize state repair and switch commands so `.coding/state.json` is always updated first and `.coding/current` is only mirrored after successful state persistence.
+- Add deprecation messaging and docs for `.coding/current`, including the conditions for removing fallback reads.
+- Add a packet-story append/update workflow so follow-up implementation stories can be created inside packet state without rerunning `packet split`.
