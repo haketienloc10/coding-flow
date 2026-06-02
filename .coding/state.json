@@ -185,7 +185,7 @@
       "hard_gates": [],
       "next_action": "packet_brief",
       "created_at": "2026-06-02T16:07:00.769602099+07:00",
-      "updated_at": "2026-06-02T17:25:26.170383502+07:00",
+      "updated_at": "2026-06-02T17:42:33.944634216+07:00",
       "artifacts": {
         "request": false,
         "intake": true,
@@ -228,12 +228,14 @@
         },
         "S04-task-packet-model-unification-design": {
           "title": "Task packet model unification design",
-          "status": "in_progress",
-          "phase": "coding_done",
+          "status": "done",
+          "phase": "commit_pending",
           "findings_count": 0,
-          "updated_at": "2026-06-02T17:25:26.170383502+07:00",
-          "verify_status": null,
-          "ship_ready": null
+          "updated_at": "2026-06-02T17:42:33.944634216+07:00",
+          "verify_status": "passed",
+          "ship_ready": true,
+          "committed": false,
+          "commit_sha": null
         }
       }
     }
