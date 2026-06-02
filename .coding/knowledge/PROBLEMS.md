@@ -76,7 +76,7 @@ Updated at: 2026-06-02T12:50:31.023213734+07:00
 
 ## P003 - Chạy agent coding tự động bị fail
 
-Status: open  
+Status: resolved  
 Severity: high  
 Area: agent_execution  
 Detected by: antigravity / `cflow agent coding`  
@@ -102,3 +102,9 @@ Tinh chỉnh skills/agent-coding.md để bổ sung few-shot examples, làm mư�
 ### Links
 
 - _None_
+
+### Resolution
+
+Cau hinh ke thua shell_environment_policy.inherit=all trong codex sandbox va tinh chinh skill prompts bo sung few-shot cung feedback loop logs
+
+Resolved at: 2026-06-02T13:07:33.504452954+07:00

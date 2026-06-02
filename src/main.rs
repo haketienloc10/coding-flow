@@ -1621,6 +1621,8 @@ fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Optio
             args: vec![
                 "exec".to_string(),
                 "--ephemeral".to_string(),
+                "-c".to_string(),
+                "shell_environment_policy.inherit=all".to_string(),
                 "--output-schema".to_string(),
                 "schemas/plan.schema.json".to_string(),
                 "--".to_string(),
@@ -1633,6 +1635,8 @@ fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Optio
             args: vec![
                 "exec".to_string(),
                 "--ephemeral".to_string(),
+                "-c".to_string(),
+                "shell_environment_policy.inherit=all".to_string(),
                 "--sandbox".to_string(),
                 "workspace-write".to_string(),
                 "--output-schema".to_string(),
@@ -1682,7 +1686,10 @@ fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Optio
         },
         ("antigravity", AgentPhase::Plan) | ("antigravity", AgentPhase::Coding) => AgentCommand {
             cmd: "agy".to_string(),
-            args: vec!["--prompt".to_string()],
+            args: vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--prompt".to_string(),
+            ],
             prompt_mode: PromptMode::Arg,
             source: "built-in antigravity default".to_string(),
         },
