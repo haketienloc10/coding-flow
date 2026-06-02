@@ -1,0 +1,52 @@
+{
+  "version": "1",
+  "current_task_id": "20260602-092035-add-lightweight-persistent-state-file",
+  "tasks": {
+    "20260602-091042-time-capsule-notes": {
+      "title": "time-capsule-notes",
+      "status": "ready_for_verify",
+      "phase": "verify_passed",
+      "next_action": "verify",
+      "created_at": "2026-06-02T09:22:52.857355746+07:00",
+      "updated_at": "2026-06-02T09:22:52.857449695+07:00",
+      "type": "new_feature",
+      "lane": "tiny",
+      "summary": "Add a lightweight copy button to code blocks in documentation pages.",
+      "artifact_presence": {
+        "REQUEST.md": true,
+        "PLAN.md": true,
+        "CODING.md": true,
+        "VERIFY.md": true,
+        "SHIP.md": false
+      },
+      "verify_status": "passed",
+      "findings_count": 0,
+      "ship_ready": null,
+      "committed": false,
+      "commit_sha": null
+    },
+    "20260602-092035-add-lightweight-persistent-state-file": {
+      "title": "add-lightweight-persistent-state-file",
+      "status": "ready_for_verify",
+      "phase": "commit_pending",
+      "next_action": "verify",
+      "created_at": "2026-06-02T09:22:52.857565892+07:00",
+      "updated_at": "2026-06-02T09:23:34.328610553+07:00",
+      "type": "new_feature",
+      "lane": "normal",
+      "summary": "Add a lightweight persistent state file to cflow.",
+      "artifact_presence": {
+        "REQUEST.md": true,
+        "PLAN.md": true,
+        "CODING.md": true,
+        "VERIFY.md": true,
+        "SHIP.md": true
+      },
+      "verify_status": "passed",
+      "findings_count": 0,
+      "ship_ready": "true",
+      "committed": false,
+      "commit_sha": null
+    }
+  }
+}

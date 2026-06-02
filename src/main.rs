@@ -152,9 +152,197 @@ fn slugify(text: &str) -> String {
         .join("-")
 }
 
+fn load_state() -> Value {
+    if let Ok(content) = fs::read_to_string(".coding/state.json") {
+        if let Ok(val) = serde_json::from_str(&content) {
+            return val;
+        }
+    }
+    let mut map = serde_json::Map::new();
+    map.insert("version".to_string(), Value::String("1".to_string()));
+    map.insert("current_task_id".to_string(), Value::Null);
+    map.insert("tasks".to_string(), Value::Object(serde_json::Map::new()));
+    Value::Object(map)
+}
+
+fn save_state(state: &Value) -> CflowResult<()> {
+    ensure_dir(".coding/state.json")?;
+    let content = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    write_text(".coding/state.json", &content)?;
+    Ok(())
+}
+
+fn extract_task_id(task_path: &str) -> String {
+    let path = Path::new(task_path);
+    let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+    filename.to_string()
+}
+
+fn update_task_state(task_id: &str, phase_override: Option<&str>, title_override: Option<&str>) -> CflowResult<()> {
+    let mut state = load_state();
+    
+    if !state["tasks"].is_object() {
+        state["tasks"] = Value::Object(serde_json::Map::new());
+    }
+    
+    let task_path = format!(".coding/tasks/{}", task_id);
+    let is_new = state["tasks"].get(task_id).is_none();
+    
+    let mut task_meta = if is_new {
+        let mut map = serde_json::Map::new();
+        map.insert("title".to_string(), Value::String(title_override.unwrap_or(task_id).to_string()));
+        map.insert("status".to_string(), Value::String("todo".to_string()));
+        map.insert("phase".to_string(), Value::String("new".to_string()));
+        map.insert("next_action".to_string(), Value::String("plan".to_string()));
+        let now = chrono::Local::now().to_rfc3339();
+        map.insert("created_at".to_string(), Value::String(now.clone()));
+        map.insert("updated_at".to_string(), Value::String(now));
+        map.insert("type".to_string(), Value::String(String::new()));
+        map.insert("lane".to_string(), Value::String(String::new()));
+        map.insert("summary".to_string(), Value::String(String::new()));
+        
+        let mut art_pres = serde_json::Map::new();
+        art_pres.insert("REQUEST.md".to_string(), Value::Bool(false));
+        art_pres.insert("PLAN.md".to_string(), Value::Bool(false));
+        art_pres.insert("CODING.md".to_string(), Value::Bool(false));
+        art_pres.insert("VERIFY.md".to_string(), Value::Bool(false));
+        art_pres.insert("SHIP.md".to_string(), Value::Bool(false));
+        map.insert("artifact_presence".to_string(), Value::Object(art_pres));
+        
+        map.insert("verify_status".to_string(), Value::Null);
+        map.insert("findings_count".to_string(), Value::Number(0.into()));
+        map.insert("ship_ready".to_string(), Value::Null);
+        map.insert("committed".to_string(), Value::Bool(false));
+        map.insert("commit_sha".to_string(), Value::Null);
+        Value::Object(map)
+    } else {
+        state["tasks"][task_id].clone()
+    };
+
+    if let Some(title) = title_override {
+        task_meta["title"] = Value::String(title.to_string());
+    }
+
+    let req_path = format!("{}/REQUEST.md", task_path);
+    let plan_path = format!("{}/PLAN.md", task_path);
+    let coding_path = format!("{}/CODING.md", task_path);
+    let verify_path = format!("{}/VERIFY.md", task_path);
+    let ship_path = format!("{}/SHIP.md", task_path);
+
+    let has_req = Path::new(&req_path).exists();
+    let has_plan = Path::new(&plan_path).exists();
+    let has_coding = Path::new(&coding_path).exists();
+    let has_verify = Path::new(&verify_path).exists();
+    let has_ship = Path::new(&ship_path).exists();
+
+    task_meta["artifact_presence"]["REQUEST.md"] = Value::Bool(has_req);
+    task_meta["artifact_presence"]["PLAN.md"] = Value::Bool(has_plan);
+    task_meta["artifact_presence"]["CODING.md"] = Value::Bool(has_coding);
+    task_meta["artifact_presence"]["VERIFY.md"] = Value::Bool(has_verify);
+    task_meta["artifact_presence"]["SHIP.md"] = Value::Bool(has_ship);
+
+    if has_req {
+        if let Ok(content) = fs::read_to_string(&req_path) {
+            if let Some(summary) = first_non_empty_section_line(&content, "Summary") {
+                task_meta["summary"] = Value::String(summary);
+            }
+            if let Some(t) = first_non_empty_section_line(&content, "Type") {
+                task_meta["type"] = Value::String(t);
+            }
+            if let Some(lane) = first_non_empty_section_line(&content, "Lane") {
+                task_meta["lane"] = Value::String(lane);
+            }
+            if let Some(next_action) = first_non_empty_section_line(&content, "Next Action") {
+                task_meta["next_action"] = Value::String(next_action);
+            }
+        }
+    }
+
+    if has_coding {
+        if let Ok(content) = fs::read_to_string(&coding_path) {
+            if let Some(status) = first_non_empty_section_line(&content, "Status") {
+                task_meta["status"] = Value::String(status);
+            }
+            if let Some(next) = first_non_empty_section_line(&content, "Next") {
+                task_meta["next_action"] = Value::String(next);
+            }
+        }
+    }
+
+    if has_verify {
+        if let Ok(content) = fs::read_to_string(&verify_path) {
+            if let Some(status) = first_non_empty_section_line(&content, "Status") {
+                task_meta["verify_status"] = Value::String(status);
+            }
+            let findings = verify_findings_count(&content);
+            task_meta["findings_count"] = Value::Number(findings.into());
+        }
+    }
+
+    if has_ship {
+        if let Ok(content) = fs::read_to_string(&ship_path) {
+            if let Some(ready) = first_non_empty_section_line(&content, "Ready") {
+                task_meta["ship_ready"] = Value::String(ready);
+            }
+        }
+    }
+
+    let phase = if let Some(p) = phase_override {
+        p.to_string()
+    } else {
+        if has_ship {
+            if task_meta["committed"].as_bool().unwrap_or(false) {
+                "committed".to_string()
+            } else {
+                "commit_pending".to_string()
+            }
+        } else if has_verify {
+            if task_meta["verify_status"].as_str() == Some("passed") {
+                "verify_passed".to_string()
+            } else {
+                "verify_failed".to_string()
+            }
+        } else if has_coding {
+            "coding_done".to_string()
+        } else if has_plan {
+            "planned".to_string()
+        } else if has_req {
+            "requested".to_string()
+        } else {
+            "new".to_string()
+        }
+    };
+
+    task_meta["phase"] = Value::String(phase);
+    task_meta["updated_at"] = Value::String(chrono::Local::now().to_rfc3339());
+
+    state["tasks"][task_id] = task_meta;
+    save_state(&state)?;
+    Ok(())
+}
+
+fn get_git_commit_sha() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !sha.is_empty() {
+            return Some(sha);
+        }
+    }
+    None
+}
+
+
 fn resolve_task(args: &[String]) -> CflowResult<String> {
     let task = get_arg(args, "--task", "current");
     if task == "current" {
+        let state = load_state();
+        if let Some(id) = state["current_task_id"].as_str() {
+            return Ok(format!(".coding/tasks/{}", id));
+        }
         if !Path::new(".coding/current").exists() {
             return Err("No current task. Run `cflow new \"<task-name>\"` first.".to_string());
         }
@@ -851,6 +1039,9 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
     let output_path = format!("{}/PLAN.md", task_path);
     write_text(&output_path, &render_plan(&data))?;
 
+    let task_id = extract_task_id(&task_path);
+    update_task_state(&task_id, Some("planned"), None)?;
+
     let steps_len = get_path(&data, &["implementation_steps"])
         .and_then(|v| v.as_array())
         .map(|a| a.len())
@@ -926,6 +1117,9 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
     let output_path = format!("{}/CODING.md", task_path);
     write_text(&output_path, &render_coding(&data))?;
 
+    let task_id = extract_task_id(&task_path);
+    update_task_state(&task_id, Some("coding_done"), None)?;
+
     let mode = option_to_js_string(get_path(&data, &["mode"]));
     let status = option_to_js_string(get_path(&data, &["status"]));
     let files_len = get_path(&data, &["changed_files"])
@@ -985,6 +1179,12 @@ fn command_new(args: &[String]) -> CflowResult<()> {
 
     ensure_dir(&format!("{}/.placeholder", full_path))?;
 
+    let mut state = load_state();
+    state["current_task_id"] = Value::String(task_id.clone());
+    save_state(&state)?;
+
+    update_task_state(&task_id, Some("new"), Some(&name))?;
+
     write_text(".coding/current", &task_path)?;
 
     println!("Task created: {}", task_id);
@@ -1003,6 +1203,10 @@ fn command_request(args: &[String]) -> CflowResult<()> {
     validate_request(&data)?;
     write_text(&output, &render_request(&data))?;
     println!("created {}", output);
+
+    let task_id = extract_task_id(&task_path);
+    update_task_state(&task_id, Some("requested"), None)?;
+
     println!(
         "next_action={}",
         option_to_js_string(get_path(&data, &["next_action"]))
@@ -1020,6 +1224,10 @@ fn command_plan(args: &[String]) -> CflowResult<()> {
     validate_plan(&data)?;
     write_text(&output, &render_plan(&data))?;
     println!("created {}", output);
+
+    let task_id = extract_task_id(&task_path);
+    update_task_state(&task_id, Some("planned"), None)?;
+
     Ok(())
 }
 
@@ -1033,6 +1241,10 @@ fn command_coding(args: &[String]) -> CflowResult<()> {
     validate_coding_for_task(&data, &task_path)?;
     write_text(&output, &render_coding(&data))?;
     println!("created {}", output);
+
+    let task_id = extract_task_id(&task_path);
+    update_task_state(&task_id, Some("coding_done"), None)?;
+
     Ok(())
 }
 
@@ -1046,6 +1258,16 @@ fn command_verify(args: &[String]) -> CflowResult<()> {
     validate_verify(&data)?;
     write_text(&output, &render_verify(&data))?;
     println!("created {}", output);
+
+    let task_id = extract_task_id(&task_path);
+    let verify_status = option_to_js_string(get_path(&data, &["status"]));
+    let phase = if verify_status == "passed" {
+        "verify_passed"
+    } else {
+        "verify_failed"
+    };
+    update_task_state(&task_id, Some(phase), None)?;
+
     println!(
         "status={}",
         option_to_js_string(get_path(&data, &["status"]))
@@ -1140,6 +1362,32 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
         git(["commit", "-m", subject.as_str()])?;
     }
 
+    let task_id = extract_task_id(&task_path);
+    let mut phase = "commit_pending";
+    let mut committed = false;
+    let mut commit_sha = None;
+
+    if commit {
+        phase = "committed";
+        committed = true;
+        commit_sha = get_git_commit_sha();
+    } else if dry_run {
+        phase = "commit_pending";
+    }
+
+    let mut state = load_state();
+    if let Some(task) = state["tasks"].get_mut(&task_id) {
+        task["committed"] = Value::Bool(committed);
+        if let Some(sha) = commit_sha {
+            task["commit_sha"] = Value::String(sha);
+        } else {
+            task["commit_sha"] = Value::Null;
+        }
+    }
+    save_state(&state)?;
+
+    update_task_state(&task_id, Some(phase), None)?;
+
     if !dry_run && !commit {
         println!("ship artifact created. use --dry-run for git status.");
     }
@@ -1148,46 +1396,230 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
 }
 
 fn command_status() {
-    if !Path::new(".coding/current").exists() {
-        println!("No current task. Run `cflow new \"<task-name>\"` first.");
+    let state = load_state();
+    let current_task_id = state["current_task_id"].as_str().unwrap_or("");
+    
+    if current_task_id.is_empty() {
+        if Path::new(".coding/current").exists() {
+            println!("Warning: .coding/current exists but state.json is missing or lacks current_task_id.");
+            println!("Suggest running `cflow state repair`.");
+        } else {
+            println!("No current task. Run `cflow new \"<task-name>\"` first.");
+        }
         return;
     }
 
-    let current_task = fs::read_to_string(".coding/current").unwrap_or_default();
-    let current_task = current_task.trim();
-    let task_id = current_task.strip_prefix("tasks/").unwrap_or(current_task);
+    println!("Current task: {}", current_task_id);
+    let task_path = format!(".coding/tasks/{}", current_task_id);
+    println!("Path: {}", task_path);
 
-    println!("Current task: {}", task_id);
-    println!("Path: .coding/{}", current_task);
+    let task_meta = match state["tasks"].get(current_task_id) {
+        Some(m) => m,
+        None => {
+            println!("Warning: Task metadata for '{}' not found in state.json.", current_task_id);
+            println!("Suggest running `cflow state repair`.");
+            return;
+        }
+    };
+
+    println!("Title: {}", option_to_js_string(task_meta.get("title")));
+    println!("Phase: {}", option_to_js_string(task_meta.get("phase")));
+    println!("Status: {}", option_to_js_string(task_meta.get("status")));
+    println!("Next Action: {}", option_to_js_string(task_meta.get("next_action")));
+
+    println!();
     println!("Artifacts:");
-
     let files = ["REQUEST.md", "PLAN.md", "CODING.md", "VERIFY.md", "SHIP.md"];
+    let mut disagree = false;
+
     for file in files {
-        let file_path = format!(".coding/{}/{}", current_task, file);
-        let status = if Path::new(&file_path).exists() {
-            "exists"
-        } else {
-            "missing"
-        };
-        println!("- {}: {}", file, status);
+        let file_path = format!("{}/{}", task_path, file);
+        let fs_exists = Path::new(&file_path).exists();
+        let state_exists = task_meta["artifact_presence"].get(file)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if fs_exists != state_exists {
+            disagree = true;
+        }
+
+        let status_str = if fs_exists { "exists" } else { "missing" };
+        println!("- {}: {}", file, status_str);
     }
 
-    let task_path = format!(".coding/{}", current_task);
     let verify_path = format!("{}/VERIFY.md", task_path);
     if Path::new(&verify_path).exists() {
         let content = fs::read_to_string(&verify_path).unwrap_or_default();
-        let status = first_non_empty_section_line(&content, "Status")
+        let fs_status = first_non_empty_section_line(&content, "Status")
             .unwrap_or_else(|| "unknown".to_string());
+        let fs_findings = verify_findings_count(&content);
+
+        let state_status = task_meta.get("verify_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let state_findings = task_meta.get("findings_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+
+        if fs_status != state_status || fs_findings != state_findings {
+            disagree = true;
+        }
+
         println!();
-        println!("Verify:");
-        println!("- Status: {}", status);
-        println!("- Findings: {}", verify_findings_count(&content));
+        println!("Verify (from filesystem):");
+        println!("- Status: {}", fs_status);
+        println!("- Findings: {}", fs_findings);
+    } else {
+        let state_has_verify = task_meta["artifact_presence"].get("VERIFY.md")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if state_has_verify {
+            disagree = true;
+        }
+    }
+
+    if task_meta["committed"].as_bool().unwrap_or(false) {
+        println!();
+        println!("Ship:");
+        println!("- Committed: true");
+        if let Some(sha) = task_meta["commit_sha"].as_str() {
+            println!("- Commit SHA: {}", sha);
+        }
     }
 
     let next = determine_next_action(&task_path);
     println!();
-    println!("Next:");
+    println!("Next (determined from filesystem):");
     println!("- {}", next.command);
+
+    if disagree {
+        println!();
+        println!("Warning: State file and filesystem disagree. Suggest running `cflow state repair`.");
+    }
+}
+
+fn command_tasks() -> CflowResult<()> {
+    let state = load_state();
+    let current_task_id = state["current_task_id"].as_str().unwrap_or("");
+    let tasks = match state["tasks"].as_object() {
+        Some(t) => t,
+        None => {
+            println!("No tasks found in state.");
+            return Ok(());
+        }
+    };
+
+    if tasks.is_empty() {
+        println!("No tasks found.");
+        return Ok(());
+    }
+
+    println!("Known tasks:");
+    for (task_id, meta) in tasks {
+        let is_current = if task_id == current_task_id { "* " } else { "  " };
+        let title = meta.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        let phase = meta.get("phase").and_then(|v| v.as_str()).unwrap_or("");
+        let status = meta.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let updated_at = meta.get("updated_at").and_then(|v| v.as_str()).unwrap_or("");
+        
+        println!(
+            "{}{} - {} (phase: {}, status: {}, updated: {})",
+            is_current, task_id, title, phase, status, updated_at
+        );
+    }
+    Ok(())
+}
+
+fn command_switch(args: &[String]) -> CflowResult<()> {
+    let task_id = args.first().cloned().unwrap_or_default();
+    if task_id.is_empty() {
+        return Err("Missing task ID. Usage: cflow switch <task-id>".to_string());
+    }
+
+    let mut state = load_state();
+    let task_exists = state["tasks"].get(&task_id).is_some();
+    if !task_exists {
+        let task_folder = format!(".coding/tasks/{}", task_id);
+        if Path::new(&task_folder).exists() {
+            println!("Task not in state.json but folder exists. Initializing state...");
+            update_task_state(&task_id, None, None)?;
+            state = load_state();
+        } else {
+            return Err(format!("Task '{}' not found in state or filesystem.", task_id));
+        }
+    }
+
+    state["current_task_id"] = Value::String(task_id.clone());
+    save_state(&state)?;
+
+    let _ = write_text(".coding/current", &format!("tasks/{}", task_id));
+
+    println!("Switched to task: {}", task_id);
+    Ok(())
+}
+
+fn command_state_repair() -> CflowResult<()> {
+    println!("Repairing state.json from .coding/tasks/* ...");
+    
+    let tasks_dir = ".coding/tasks";
+    if !Path::new(tasks_dir).exists() {
+        println!("No tasks folder found at {}", tasks_dir);
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(tasks_dir).map_err(|e| e.to_string())?;
+    let mut task_ids = Vec::new();
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    task_ids.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    task_ids.sort();
+
+    for task_id in &task_ids {
+        println!("- Syncing state for: {}", task_id);
+        let title = if task_id.len() > 16 {
+            task_id[16..].to_string()
+        } else {
+            task_id.clone()
+        };
+        update_task_state(task_id, None, Some(&title))?;
+    }
+
+    let mut state = load_state();
+    let current_task_id = state["current_task_id"].as_str().map(String::from);
+    
+    if current_task_id.is_none() || !task_ids.contains(current_task_id.as_ref().unwrap()) {
+        let mut fallback_id = None;
+        if Path::new(".coding/current").exists() {
+            if let Ok(current_content) = fs::read_to_string(".coding/current") {
+                let current_content = current_content.trim();
+                let id = current_content.strip_prefix("tasks/").unwrap_or(current_content);
+                if task_ids.contains(&id.to_string()) {
+                    fallback_id = Some(id.to_string());
+                }
+            }
+        }
+        
+        if fallback_id.is_none() {
+            fallback_id = task_ids.last().cloned();
+        }
+        
+        if let Some(id) = fallback_id {
+            println!("Setting current_task_id to: {}", id);
+            state["current_task_id"] = Value::String(id);
+            save_state(&state)?;
+        }
+    }
+
+    println!("State repair complete.");
+    Ok(())
 }
 
 fn get_verify_status(task_path: &str) -> Option<String> {
@@ -1356,15 +1788,11 @@ fn print_usage() {
   cflow verify  [--task current] [--input file]
   cflow ship    [--task current] [--input file] [--dry-run|--commit]
   cflow status
+  cflow tasks
+  cflow switch <task-id>
+  cflow state repair
   cflow next    [--task current]
   cflow run     [--task current]
-
-Examples:
-  cflow new \"focus garden\"
-  cat request.json | cflow request
-  cflow plan --input examples/plan.json
-  cflow next
-  cflow run
 "
     );
 }
@@ -1388,6 +1816,15 @@ fn run() -> CflowResult<()> {
         Some("status") => {
             command_status();
             Ok(())
+        }
+        Some("tasks") => command_tasks(),
+        Some("switch") => command_switch(&raw_args),
+        Some("state") => {
+            if raw_args.first().map(|s| s.as_str()) == Some("repair") {
+                command_state_repair()
+            } else {
+                Err("Unknown state command. Did you mean `cflow state repair`?".to_string())
+            }
         }
         Some("next") => command_next(&raw_args),
         Some("run") => command_run(&raw_args),
