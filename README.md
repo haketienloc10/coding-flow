@@ -127,6 +127,57 @@ args = ["--prompt"]
 prompt_mode = "arg"
 ```
 
+## Problems
+
+`cflow` can store durable problems discovered during workflow execution.
+
+Problems are stored in:
+
+```text
+.coding/knowledge/PROBLEMS.md
+```
+
+Add a problem:
+
+```bash
+cat <<'JSON' | bin/cflow problem add
+{
+  "title": "Agent output was invalid JSON",
+  "severity": "medium",
+  "area": "agent-plan",
+  "detected_by": {
+    "agent": "codex",
+    "provider": "codex",
+    "command": "cflow agent plan --provider codex"
+  },
+  "phase": "plan",
+  "problem": "Agent returned prose instead of JSON.",
+  "impact": "PLAN.md could not be rendered.",
+  "fallback": "Retried with stricter JSON-only prompt.",
+  "follow_up": "Use schema-enforced provider mode when available.",
+  "links": []
+}
+JSON
+```
+
+List open problems:
+
+```bash
+bin/cflow problem list --status open
+```
+
+Resolve:
+
+```bash
+bin/cflow problem resolve P001 --note "Schema-enforced output added."
+```
+
+Cancel:
+
+```bash
+bin/cflow problem cancel P002 --note "No longer relevant."
+```
+
 ## Cài đặt nhanh
 
 Từ folder `coding-flow-v0`:

@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "current_task_id": "20260602-113918-implement-packet-workflow",
-  "current_packet_id": "20260602-113855-time-capsule-notes",
-  "current_story_id": "S02-create-form",
+  "current_task_id": null,
+  "current_packet_id": "20260602-124336-problem-registry",
+  "current_story_id": "S01-problem-commands",
   "tasks": {
     "20260602-113855-time-capsule-notes": {
       "title": "20260602-113855-time-capsule-notes",
@@ -85,6 +85,42 @@
           "title": "Create capsule form",
           "status": "in_progress",
           "phase": "verify_passed",
+          "findings_count": 0
+        }
+      }
+    },
+    "20260602-124336-problem-registry": {
+      "title": "problem registry",
+      "status": "done",
+      "phase": "committed",
+      "lane": "normal",
+      "split_required": true,
+      "risk_flags": [
+        "CLI command surface",
+        "markdown parsing and mutation",
+        "workflow documentation"
+      ],
+      "hard_gates": [
+        "No persistent problem JSON",
+        "Only .coding/state.json may remain persistent JSON",
+        "PROBLEMS.md must be created automatically"
+      ],
+      "next_action": "packet_brief",
+      "created_at": "2026-06-02T12:43:36.627999352+07:00",
+      "updated_at": "2026-06-02T12:51:30.907209706+07:00",
+      "artifacts": {
+        "request": false,
+        "intake": true,
+        "packet": true,
+        "stories": true,
+        "packet_verify": true,
+        "packet_ship": true
+      },
+      "stories": {
+        "S01-problem-commands": {
+          "title": "Problem registry CLI and docs",
+          "status": "done",
+          "phase": "commit_pending",
           "findings_count": 0
         }
       }

@@ -11,6 +11,46 @@
 - Do not create persistent phase JSON files.
 - The only persistent JSON is .coding/state.json.
 
+## Problems
+
+Record durable workflow or agent problems in:
+
+```text
+.coding/knowledge/PROBLEMS.md
+```
+
+Use:
+
+```bash
+cflow problem add
+```
+
+Record a problem when an agent command fails, JSON output is invalid, fallback is required, workflow routing is wrong, or the issue is likely to repeat.
+
+A problem entry must include:
+
+* status
+* severity
+* area
+* detected agent/provider/command
+* phase
+* problem
+* impact
+* fallback
+* follow-up
+* links
+
+Do not store long logs, full diffs, or noisy terminal output.
+
+Use:
+
+```bash
+cflow problem list --status open
+cflow problem show P001
+cflow problem resolve P001 --note "..."
+cflow problem cancel P001 --note "..."
+```
+
 ## Core Flow
 
 ```text
