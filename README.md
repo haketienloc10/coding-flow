@@ -5,9 +5,9 @@ Bộ workflow mỏng nhẹ cho coding task:
 ## Recommended flow
 
 ```bash
-node bin/cflow new "focus garden"
+bin/cflow new "focus garden"
 
-cat <<'JSON' | node bin/cflow request --task current
+cat <<'JSON' | bin/cflow request --task current
 {
   "summary": "Build Focus Garden MVP",
   "type": "new_feature",
@@ -21,10 +21,10 @@ cat <<'JSON' | node bin/cflow request --task current
 }
 JSON
 
-node bin/cflow agent plan --task current
-node bin/cflow agent coding --task current
+bin/cflow agent plan --task current
+bin/cflow agent coding --task current
 
-cat <<'JSON' | node bin/cflow verify --task current
+cat <<'JSON' | bin/cflow verify --task current
 {
   "status": "passed",
   "checks": [],
@@ -35,7 +35,7 @@ cat <<'JSON' | node bin/cflow verify --task current
 }
 JSON
 
-cat <<'JSON' | node bin/cflow ship --task current --dry-run
+cat <<'JSON' | bin/cflow ship --task current --dry-run
 {
   "ready": true,
   "commit": {
@@ -58,13 +58,13 @@ JSON
 ## Manual fallback flow
 
 ```bash
-node bin/cflow new "focus garden"
+bin/cflow new "focus garden"
 
-cat request.json | node bin/cflow request --task current
-cat plan.json | node bin/cflow plan --task current
-cat coding.json | node bin/cflow coding --task current
-cat verify.json | node bin/cflow verify --task current
-cat ship.json | node bin/cflow ship --task current --dry-run
+cat request.json | bin/cflow request --task current
+cat plan.json | bin/cflow plan --task current
+cat coding.json | bin/cflow coding --task current
+cat verify.json | bin/cflow verify --task current
+cat ship.json | bin/cflow ship --task current --dry-run
 ```
 
 ## Quy tắc bắt buộc (Important Rules)
@@ -97,7 +97,7 @@ Hoặc dùng launcher tương thích trong workspace:
 
 ## Task resolution
 
-`cflow` commands like `request`, `plan`, `coding`, `verify`, and `ship` can use `--task` to resolve which folder to use.
+bin/cflow` commands like `request`, `plan`, `coding`, `verify`, and `ship` can use `--task` to resolve which folder to use.
 - `--task current` (default): Uses the task specified in `.coding/current`.
 - `--task <task-id>`: Uses `.coding/tasks/<task-id>`.
 - `--task .coding/tasks/<task-id>`: Uses the absolute or relative path directly.

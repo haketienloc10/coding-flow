@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-node bin/cflow agent plan --task current
+bin/cflow agent plan --task current

@@ -28,8 +28,8 @@ request -> plan -> coding -> verify -> ship
   * CODING.md
   * VERIFY.md
   * SHIP.md
-* Prefer `cflow agent plan --task current` for non-trivial planning.
-* Prefer `cflow agent coding --task current` for non-trivial implementation.
+* Prefer `bin/cflow agent plan --task current` for non-trivial planning.
+* Prefer `bin/cflow agent coding --task current` for non-trivial implementation.
 * Keep main context clean: rely on short `cflow` summaries.
 * Do not read long artifacts unless debugging or explicitly needed.
 * Do not ship unless `VERIFY.md` exists and verification status is `passed`.
