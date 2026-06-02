@@ -64,3 +64,36 @@ P008 tracks the failure and S01 includes schema compatibility validation.
 
 ### Supersedes
 None
+
+## D-0003: Use packet state for packet story commands
+
+Status: accepted
+Date: 2026-06-02
+Agent: codex
+Related Problems: P014
+
+### Context
+Packet story artifacts live under .coding/packets/<packet>/stories, while legacy story commands looked for task-level stories.md and failed for S02.
+
+### Decision
+Resolve story list, switch, and status from current packet state first, then fall back to legacy task-level story files.
+
+### Options Considered
+- Use packet state first
+- Parse packet STORIES.md only
+- Keep legacy task-level stories.md behavior
+
+### Tradeoffs
+Pros:
+- Works with existing packet state
+- avoids manual markdown edits
+- preserves legacy fallback
+
+Cons:
+- State repair must keep packet story metadata current
+
+### Consequences
+state repair now syncs packet/story artifacts and .coding/current so story commands have a durable source of truth.
+
+### Supersedes
+None

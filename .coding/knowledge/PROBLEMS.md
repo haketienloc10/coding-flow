@@ -429,3 +429,38 @@ Fix story status path resolution for the current packet/story context or documen
 
 - `src/main.rs`
 - `.coding/state.json`
+
+## P014 - story switch reads wrong story index path
+
+Status: resolved  
+Severity: medium  
+Area: story workflow state  
+Detected by: codex / gpt-5 / `./bin/cflow story switch S02-state-consistency-repair`  
+Phase: workflow  
+Detected at: 2026-06-02T16:22:50.468149793+07:00  
+
+### Problem
+
+story switch failed with stories.md not found at the previous story directory instead of using the packet root STORIES.md or state packet story metadata.
+
+### Impact
+
+Agents cannot switch to an existing packet story through the documented story flow, so current_story_id remains stale and story commands fail.
+
+### Fallback
+
+Read packet/story artifacts directly and keep implementation scoped to S02 until the CLI repair is implemented.
+
+### Follow-up
+
+Fix story resolution and state repair so packet-root stories are discoverable consistently.
+
+### Links
+
+- `.coding/packets/20260602-160700-workflow-audit-priority-fixes/stories/S02-state-consistency-repair/STORY.md`
+
+### Resolution
+
+Fixed in S02 by resolving story switch/list/status from packet state and extending state repair for packet stories.
+
+Resolved at: 2026-06-02T16:31:38.688764421+07:00

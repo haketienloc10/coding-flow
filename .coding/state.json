@@ -2,7 +2,7 @@
   "version": 2,
   "current_task_id": null,
   "current_packet_id": "20260602-160700-workflow-audit-priority-fixes",
-  "current_story_id": "S01-validation-template-dx-fixes",
+  "current_story_id": "S02-state-consistency-repair",
   "tasks": {
     "20260602-113855-time-capsule-notes": {
       "title": "20260602-113855-time-capsule-notes",
@@ -33,7 +33,7 @@
       "phase": "commit_pending",
       "next_action": "verify",
       "created_at": "2026-06-02T11:39:18.732510066+07:00",
-      "updated_at": "2026-06-02T11:39:35.432299437+07:00",
+      "updated_at": "2026-06-02T16:29:48.860576667+07:00",
       "type": "new_feature",
       "lane": "normal",
       "summary": "implement theo yêu cầu US-update-packet-workflow.md",
@@ -46,7 +46,7 @@
       },
       "verify_status": "passed",
       "findings_count": 0,
-      "ship_ready": "true",
+      "ship_ready": true,
       "committed": false,
       "commit_sha": null
     }
@@ -65,7 +65,7 @@
       "hard_gates": [],
       "next_action": "packet_split",
       "created_at": "2026-06-02T11:38:55.361407098+07:00",
-      "updated_at": "2026-06-02T11:39:14.747215408+07:00",
+      "updated_at": "2026-06-02T16:29:48.861372993+07:00",
       "artifacts": {
         "request": true,
         "intake": true,
@@ -79,13 +79,19 @@
           "title": "Storage and data model",
           "status": "in_progress",
           "phase": "verify_passed",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": "passed",
+          "ship_ready": null
         },
         "S02-create-form": {
           "title": "Create capsule form",
           "status": "in_progress",
           "phase": "verify_passed",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": "passed",
+          "ship_ready": null
         }
       }
     },
@@ -107,7 +113,7 @@
       ],
       "next_action": "packet_brief",
       "created_at": "2026-06-02T12:43:36.627999352+07:00",
-      "updated_at": "2026-06-02T12:51:30.907209706+07:00",
+      "updated_at": "2026-06-02T16:29:48.861372993+07:00",
       "artifacts": {
         "request": false,
         "intake": true,
@@ -121,7 +127,10 @@
           "title": "Problem registry CLI and docs",
           "status": "done",
           "phase": "commit_pending",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": "passed",
+          "ship_ready": true
         }
       }
     },
@@ -139,7 +148,7 @@
       "hard_gates": [],
       "next_action": "packet_brief",
       "created_at": "2026-06-02T13:24:03.813763364+07:00",
-      "updated_at": "2026-06-02T14:50:05.762379769+07:00",
+      "updated_at": "2026-06-02T16:29:48.861372993+07:00",
       "artifacts": {
         "request": false,
         "intake": true,
@@ -153,7 +162,10 @@
           "title": "Add decision log workflow",
           "status": "done",
           "phase": "commit_pending",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": "passed",
+          "ship_ready": true
         }
       }
     },
@@ -173,7 +185,7 @@
       "hard_gates": [],
       "next_action": "packet_brief",
       "created_at": "2026-06-02T16:07:00.769602099+07:00",
-      "updated_at": "2026-06-02T16:16:57.557725649+07:00",
+      "updated_at": "2026-06-02T16:32:11.231392118+07:00",
       "artifacts": {
         "request": false,
         "intake": true,
@@ -187,25 +199,39 @@
           "title": "Validation/template/DX audit fixes",
           "status": "done",
           "phase": "committed",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": "passed",
+          "ship_ready": true
         },
         "S02-state-consistency-repair": {
           "title": "State consistency repair",
-          "status": "todo",
-          "phase": "new",
-          "findings_count": 0
+          "status": "done",
+          "phase": "commit_pending",
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:32:11.231392118+07:00",
+          "verify_status": "passed",
+          "ship_ready": true,
+          "committed": false,
+          "commit_sha": null
         },
         "S03-main-module-extraction-plan": {
           "title": "Main module extraction foundation",
           "status": "todo",
           "phase": "new",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": null,
+          "ship_ready": null
         },
         "S04-task-packet-model-unification-design": {
           "title": "Task packet model unification design",
           "status": "todo",
           "phase": "new",
-          "findings_count": 0
+          "findings_count": 0,
+          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
+          "verify_status": null,
+          "ship_ready": null
         }
       }
     }

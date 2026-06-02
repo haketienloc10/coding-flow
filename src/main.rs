@@ -224,6 +224,191 @@ fn extract_task_id(task_path: &str) -> String {
     filename.to_string()
 }
 
+fn markdown_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn story_title_from_file(story_path: &str, fallback: &str) -> String {
+    let story_file = format!("{}/STORY.md", story_path);
+    let Ok(content) = fs::read_to_string(story_file) else {
+        return fallback.to_string();
+    };
+
+    for line in content.lines() {
+        if let Some(title) = line.strip_prefix("# Story:") {
+            let title = title.trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+    }
+
+    fallback.to_string()
+}
+
+fn sync_story_meta_from_artifacts(
+    existing: Option<&Value>,
+    story_path: &str,
+    story_id: &str,
+    title_override: Option<&str>,
+    phase_override: Option<&str>,
+    now: &str,
+) -> Value {
+    let mut story_meta = existing
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+
+    let has_plan = Path::new(&format!("{}/PLAN.md", story_path)).exists();
+    let has_coding = Path::new(&format!("{}/CODING.md", story_path)).exists();
+    let has_verify = Path::new(&format!("{}/VERIFY.md", story_path)).exists();
+    let has_ship = Path::new(&format!("{}/SHIP.md", story_path)).exists();
+
+    let title = title_override
+        .map(|title| title.to_string())
+        .or_else(|| {
+            story_meta
+                .get("title")
+                .and_then(|value| value.as_str())
+                .map(|title| title.to_string())
+        })
+        .unwrap_or_else(|| story_title_from_file(story_path, story_id));
+
+    let status = if has_ship {
+        "done".to_string()
+    } else if has_coding {
+        "in_progress".to_string()
+    } else {
+        story_meta
+            .get("status")
+            .and_then(|value| value.as_str())
+            .unwrap_or("todo")
+            .to_string()
+    };
+
+    let verify_content = if has_verify {
+        fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let verify_status = if has_verify {
+        first_non_empty_section_line(&verify_content, "Status")
+    } else {
+        None
+    };
+    let findings_count = if has_verify {
+        verify_findings_count(&verify_content)
+    } else {
+        0
+    };
+
+    let existing_committed = story_meta
+        .get("committed")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+        || story_meta
+            .get("phase")
+            .and_then(|value| value.as_str())
+            .is_some_and(|phase| phase == "committed");
+
+    let phase = if let Some(phase) = phase_override {
+        phase.to_string()
+    } else if has_ship {
+        if existing_committed {
+            "committed".to_string()
+        } else {
+            "commit_pending".to_string()
+        }
+    } else if has_verify {
+        if verify_status.as_deref() == Some("passed") {
+            "verify_passed".to_string()
+        } else {
+            "verify_failed".to_string()
+        }
+    } else if has_coding {
+        "coding_done".to_string()
+    } else if has_plan {
+        "planned".to_string()
+    } else {
+        "new".to_string()
+    };
+
+    story_meta["title"] = Value::String(title);
+    story_meta["status"] = Value::String(status);
+    story_meta["phase"] = Value::String(phase);
+    story_meta["findings_count"] = Value::Number(findings_count.into());
+    story_meta["updated_at"] = Value::String(now.to_string());
+
+    if let Some(status) = verify_status {
+        story_meta["verify_status"] = Value::String(status);
+    } else {
+        story_meta["verify_status"] = Value::Null;
+    }
+
+    if has_ship {
+        let ship_content =
+            fs::read_to_string(&format!("{}/SHIP.md", story_path)).unwrap_or_default();
+        if let Some(ready) = first_non_empty_section_line(&ship_content, "Ready") {
+            if let Some(ready) = markdown_bool(&ready) {
+                story_meta["ship_ready"] = Value::Bool(ready);
+            } else {
+                story_meta["ship_ready"] = Value::Null;
+            }
+        }
+    } else {
+        story_meta["ship_ready"] = Value::Null;
+    }
+
+    story_meta
+}
+
+fn find_story_in_packet_state(state: &Value, target: &str) -> Option<(String, String)> {
+    let current_packet = state["current_packet_id"].as_str().unwrap_or("");
+    if !current_packet.is_empty() {
+        if let Some(stories) = state["packets"]
+            .get(current_packet)
+            .and_then(|packet| packet.get("stories"))
+            .and_then(|stories| stories.as_object())
+        {
+            for story_id in stories.keys() {
+                if story_id == target || story_id.starts_with(&format!("{}-", target)) {
+                    return Some((current_packet.to_string(), story_id.to_string()));
+                }
+            }
+        }
+    }
+
+    let packets = state["packets"].as_object()?;
+    for (packet_id, packet) in packets {
+        let Some(stories) = packet
+            .get("stories")
+            .and_then(|stories| stories.as_object())
+        else {
+            continue;
+        };
+        for story_id in stories.keys() {
+            if story_id == target || story_id.starts_with(&format!("{}-", target)) {
+                return Some((packet_id.to_string(), story_id.to_string()));
+            }
+        }
+    }
+
+    None
+}
+
+fn packet_story_ids_from_path(task_path: &str) -> Option<(String, String)> {
+    let parts = task_path.split('/').collect::<Vec<_>>();
+    for window in parts.windows(4) {
+        if window[0] == "packets" && window[2] == "stories" {
+            return Some((window[1].to_string(), window[3].to_string()));
+        }
+    }
+    None
+}
+
 fn update_task_state(
     task_id: &str,
     phase_override: Option<&str>,
@@ -243,59 +428,19 @@ fn update_task_state(
 
     if is_story {
         let packet_id = state["current_packet_id"].as_str().unwrap().to_string();
-        let mut story_meta = state["packets"][&packet_id]["stories"][task_id].clone();
         let story_path = format!(".coding/packets/{}/stories/{}", packet_id, task_id);
-
-        let has_plan = Path::new(&format!("{}/PLAN.md", story_path)).exists();
-        let has_coding = Path::new(&format!("{}/CODING.md", story_path)).exists();
-        let has_verify = Path::new(&format!("{}/VERIFY.md", story_path)).exists();
-        let has_ship = Path::new(&format!("{}/SHIP.md", story_path)).exists();
-
-        let mut status = story_meta["status"].as_str().unwrap_or("todo").to_string();
-        if has_ship {
-            status = "done".to_string();
-        } else if has_coding {
-            status = "in_progress".to_string();
-        }
-
-        let phase = if let Some(p) = phase_override {
-            p.to_string()
-        } else {
-            if has_ship {
-                "shipped".to_string()
-            } else if has_verify {
-                let verify_content =
-                    fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default();
-                let verify_status =
-                    first_non_empty_section_line(&verify_content, "Status").unwrap_or_default();
-                if verify_status == "passed" {
-                    "verify_passed".to_string()
-                } else {
-                    "verify_failed".to_string()
-                }
-            } else if has_coding {
-                "coding_done".to_string()
-            } else if has_plan {
-                "planned".to_string()
-            } else {
-                "new".to_string()
-            }
-        };
-
-        let mut findings_count = 0;
-        if has_verify {
-            let verify_content =
-                fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default();
-            findings_count = verify_findings_count(&verify_content);
-        }
-
-        story_meta["status"] = Value::String(status);
-        story_meta["phase"] = Value::String(phase);
-        story_meta["findings_count"] = Value::Number(findings_count.into());
+        let now = chrono::Local::now().to_rfc3339();
+        let story_meta = sync_story_meta_from_artifacts(
+            state["packets"][&packet_id]["stories"].get(task_id),
+            &story_path,
+            task_id,
+            title_override,
+            phase_override,
+            &now,
+        );
 
         state["packets"][&packet_id]["stories"][task_id] = story_meta;
-        state["packets"][&packet_id]["updated_at"] =
-            Value::String(chrono::Local::now().to_rfc3339());
+        state["packets"][&packet_id]["updated_at"] = Value::String(now);
 
         save_state(&state)?;
         return Ok(());
@@ -405,9 +550,15 @@ fn update_task_state(
     if has_ship {
         if let Ok(content) = fs::read_to_string(&ship_path) {
             if let Some(ready) = first_non_empty_section_line(&content, "Ready") {
-                task_meta["ship_ready"] = Value::String(ready);
+                if let Some(ready) = markdown_bool(&ready) {
+                    task_meta["ship_ready"] = Value::Bool(ready);
+                } else {
+                    task_meta["ship_ready"] = Value::Null;
+                }
             }
         }
+    } else {
+        task_meta["ship_ready"] = Value::Null;
     }
 
     let phase = if let Some(p) = phase_override {
@@ -4179,6 +4330,37 @@ fn command_packet(args: &[String]) -> CflowResult<()> {
 
 fn command_story_list() -> CflowResult<()> {
     let state = load_state();
+    if let Some(packet_id) = state["current_packet_id"].as_str() {
+        if let Some(stories) = state["packets"]
+            .get(packet_id)
+            .and_then(|packet| packet.get("stories"))
+            .and_then(|stories| stories.as_object())
+        {
+            if stories.is_empty() {
+                println!("No stories found.");
+                return Ok(());
+            }
+
+            println!("Stories:");
+            for (story_id, meta) in stories {
+                let current_marker = if state["current_story_id"].as_str() == Some(story_id) {
+                    "*"
+                } else {
+                    " "
+                };
+                println!(
+                    "{} {}: {} (Packet: {}) - {}",
+                    current_marker,
+                    story_id,
+                    option_to_js_string(meta.get("status")),
+                    packet_id,
+                    option_to_js_string(meta.get("title"))
+                );
+            }
+            return Ok(());
+        }
+    }
+
     let args = Vec::new();
     let task_path = resolve_task(&args)?;
     let stories_file = format!("{}/stories.md", task_path);
@@ -4221,6 +4403,18 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
     }
 
     let mut state = load_state();
+    if let Some((packet_id, story_id)) = find_story_in_packet_state(&state, &target) {
+        state["current_task_id"] = Value::Null;
+        state["current_packet_id"] = Value::String(packet_id.clone());
+        state["current_story_id"] = Value::String(story_id.clone());
+        save_state(&state)?;
+
+        let story_dir = format!("packets/{}/stories/{}", packet_id, story_id);
+        write_text(".coding/current", &story_dir)?;
+
+        println!("Switched to story: {}", story_id);
+        return Ok(());
+    }
 
     let temp_args = Vec::new();
     let task_path_resolved = resolve_task(&temp_args)?;
@@ -4250,6 +4444,7 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
         ));
     }
 
+    state["current_task_id"] = Value::Null;
     state["current_packet_id"] = Value::String(matched_story.packet.clone());
     state["current_story_id"] = Value::String(matched_story.id.clone());
     save_state(&state)?;
@@ -4270,6 +4465,25 @@ fn command_story_status() -> CflowResult<()> {
         println!("No current story selected.");
         return Ok(());
     };
+
+    if let Some(packet_id) = state["current_packet_id"].as_str() {
+        if let Some(story) = state["packets"]
+            .get(packet_id)
+            .and_then(|packet| packet.get("stories"))
+            .and_then(|stories| stories.get(story_id))
+        {
+            println!("Current story: {}", story_id);
+            println!("Title: {}", option_to_js_string(story.get("title")));
+            println!("Status: {}", option_to_js_string(story.get("status")));
+            println!("Packet: {}", packet_id);
+            println!("Phase: {}", option_to_js_string(story.get("phase")));
+            println!(
+                "Findings: {}",
+                option_to_js_string(story.get("findings_count"))
+            );
+            return Ok(());
+        }
+    }
 
     let args = Vec::new();
     let task_path = resolve_task(&args)?;
@@ -4396,6 +4610,8 @@ fn command_new(args: &[String]) -> CflowResult<()> {
 
     let mut state = load_state();
     state["current_task_id"] = Value::String(task_id.clone());
+    state["current_packet_id"] = Value::Null;
+    state["current_story_id"] = Value::Null;
     save_state(&state)?;
 
     update_task_state(&task_id, Some("new"), Some(&name))?;
@@ -4591,7 +4807,20 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
     }
 
     let mut state = load_state();
-    if let Some(task) = state["tasks"].get_mut(&task_id) {
+    if let Some((packet_id, story_id)) = packet_story_ids_from_path(&task_path) {
+        if let Some(story) = state["packets"]
+            .get_mut(&packet_id)
+            .and_then(|packet| packet.get_mut("stories"))
+            .and_then(|stories| stories.get_mut(&story_id))
+        {
+            story["committed"] = Value::Bool(committed);
+            if let Some(sha) = commit_sha {
+                story["commit_sha"] = Value::String(sha);
+            } else {
+                story["commit_sha"] = Value::Null;
+            }
+        }
+    } else if let Some(task) = state["tasks"].get_mut(&task_id) {
         task["committed"] = Value::Bool(committed);
         if let Some(sha) = commit_sha {
             task["commit_sha"] = Value::String(sha);
@@ -4644,6 +4873,23 @@ fn command_status() {
                     println!("No current story selected.");
                 }
 
+                if let Ok(current_content) = fs::read_to_string(".coding/current") {
+                    let current_content = current_content.trim();
+                    let expected = state["current_story_id"]
+                        .as_str()
+                        .filter(|story_id| !story_id.is_empty())
+                        .map(|story_id| format!("packets/{}/stories/{}", packet_id, story_id))
+                        .unwrap_or_else(|| format!("packets/{}", packet_id));
+                    if !current_content.is_empty() && current_content != expected {
+                        println!();
+                        println!(
+                            "Warning: .coding/current points to '{}' but state.json points to '{}'.",
+                            current_content, expected
+                        );
+                        println!("Suggest running `cflow state repair`.");
+                    }
+                }
+
                 let packet_path = format!(".coding/packets/{}", packet_id);
                 let next = determine_next_action(&packet_path);
                 println!();
@@ -4688,6 +4934,19 @@ fn command_status() {
         "Next Action: {}",
         option_to_js_string(task_meta.get("next_action"))
     );
+
+    if let Ok(current_content) = fs::read_to_string(".coding/current") {
+        let current_content = current_content.trim();
+        let expected = format!("tasks/{}", current_task_id);
+        if !current_content.is_empty() && current_content != expected {
+            println!();
+            println!(
+                "Warning: .coding/current points to '{}' but state.json points to '{}'.",
+                current_content, expected
+            );
+            println!("Suggest running `cflow state repair`.");
+        }
+    }
 
     println!();
     println!("Artifacts:");
@@ -4828,6 +5087,8 @@ fn command_switch(args: &[String]) -> CflowResult<()> {
     }
 
     state["current_task_id"] = Value::String(task_id.clone());
+    state["current_packet_id"] = Value::Null;
+    state["current_story_id"] = Value::Null;
     save_state(&state)?;
 
     let _ = write_text(".coding/current", &format!("tasks/{}", task_id));
@@ -4837,25 +5098,24 @@ fn command_switch(args: &[String]) -> CflowResult<()> {
 }
 
 fn command_state_repair() -> CflowResult<()> {
-    println!("Repairing state.json from .coding/tasks/* ...");
+    println!("Repairing state.json from .coding/tasks/* and .coding/packets/* ...");
 
     let tasks_dir = ".coding/tasks";
-    if !Path::new(tasks_dir).exists() {
-        println!("No tasks folder found at {}", tasks_dir);
-        return Ok(());
-    }
-
-    let entries = fs::read_dir(tasks_dir).map_err(|e| e.to_string())?;
     let mut task_ids = Vec::new();
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    task_ids.push(name.to_string());
+    if Path::new(tasks_dir).exists() {
+        let entries = fs::read_dir(tasks_dir).map_err(|e| e.to_string())?;
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        task_ids.push(name.to_string());
+                    }
                 }
             }
         }
+    } else {
+        println!("No tasks folder found at {}", tasks_dir);
     }
 
     task_ids.sort();
@@ -4871,33 +5131,222 @@ fn command_state_repair() -> CflowResult<()> {
     }
 
     let mut state = load_state();
-    let current_task_id = state["current_task_id"].as_str().map(String::from);
 
-    if current_task_id.is_none() || !task_ids.contains(current_task_id.as_ref().unwrap()) {
-        let mut fallback_id = None;
-        if Path::new(".coding/current").exists() {
-            if let Ok(current_content) = fs::read_to_string(".coding/current") {
-                let current_content = current_content.trim();
-                let id = current_content
-                    .strip_prefix("tasks/")
-                    .unwrap_or(current_content);
-                if task_ids.contains(&id.to_string()) {
-                    fallback_id = Some(id.to_string());
+    if !state["packets"].is_object() {
+        state["packets"] = Value::Object(serde_json::Map::new());
+    }
+
+    let packets_dir = ".coding/packets";
+    let mut packet_ids = Vec::new();
+    if Path::new(packets_dir).exists() {
+        let entries = fs::read_dir(packets_dir).map_err(|e| e.to_string())?;
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        packet_ids.push(name.to_string());
+                    }
                 }
             }
         }
+    } else {
+        println!("No packets folder found at {}", packets_dir);
+    }
 
-        if fallback_id.is_none() {
-            fallback_id = task_ids.last().cloned();
+    packet_ids.sort();
+    let now = chrono::Local::now().to_rfc3339();
+
+    for packet_id in &packet_ids {
+        println!("- Syncing packet state for: {}", packet_id);
+        let packet_path = format!(".coding/packets/{}", packet_id);
+        let existing = state["packets"].get(packet_id).cloned();
+        let mut packet_meta = existing
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+
+        let title = packet_meta
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or(packet_id)
+            .to_string();
+
+        let has_request = Path::new(&format!("{}/REQUEST.md", packet_path)).exists();
+        let has_intake = Path::new(&format!("{}/INTAKE.md", packet_path)).exists();
+        let has_packet = Path::new(&format!("{}/PACKET.md", packet_path)).exists();
+        let has_stories = Path::new(&format!("{}/STORIES.md", packet_path)).exists();
+        let has_packet_verify = Path::new(&format!("{}/PACKET_VERIFY.md", packet_path)).exists();
+        let has_packet_ship = Path::new(&format!("{}/PACKET_SHIP.md", packet_path)).exists();
+
+        let mut artifacts = serde_json::Map::new();
+        artifacts.insert("request".to_string(), Value::Bool(has_request));
+        artifacts.insert("intake".to_string(), Value::Bool(has_intake));
+        artifacts.insert("packet".to_string(), Value::Bool(has_packet));
+        artifacts.insert("stories".to_string(), Value::Bool(has_stories));
+        artifacts.insert("packet_verify".to_string(), Value::Bool(has_packet_verify));
+        artifacts.insert("packet_ship".to_string(), Value::Bool(has_packet_ship));
+
+        let packet_verify_status = if has_packet_verify {
+            let content = fs::read_to_string(&format!("{}/PACKET_VERIFY.md", packet_path))
+                .unwrap_or_default();
+            first_non_empty_section_line(&content, "Status")
+        } else {
+            None
+        };
+
+        let phase = if has_packet_ship {
+            "committed".to_string()
+        } else if has_packet_verify {
+            if packet_verify_status.as_deref() == Some("passed") {
+                "packet_verify_passed".to_string()
+            } else {
+                "packet_verify_failed".to_string()
+            }
+        } else if has_stories {
+            "split_done".to_string()
+        } else if has_packet {
+            "packet_briefed".to_string()
+        } else if has_intake {
+            "intake_done".to_string()
+        } else {
+            "new".to_string()
+        };
+
+        let status = if has_packet_ship {
+            "done".to_string()
+        } else {
+            packet_meta
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or("in_progress")
+                .to_string()
+        };
+
+        let stories_dir = format!("{}/stories", packet_path);
+        let existing_stories = packet_meta
+            .get("stories")
+            .and_then(|value| value.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let mut repaired_stories = serde_json::Map::new();
+
+        if Path::new(&stories_dir).exists() {
+            let entries = fs::read_dir(&stories_dir).map_err(|e| e.to_string())?;
+            let mut story_ids = Vec::new();
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            story_ids.push(name.to_string());
+                        }
+                    }
+                }
+            }
+            story_ids.sort();
+
+            for story_id in story_ids {
+                let story_path = format!("{}/{}", stories_dir, story_id);
+                let story_meta = sync_story_meta_from_artifacts(
+                    existing_stories.get(&story_id),
+                    &story_path,
+                    &story_id,
+                    None,
+                    None,
+                    &now,
+                );
+                repaired_stories.insert(story_id, story_meta);
+            }
         }
 
-        if let Some(id) = fallback_id {
-            println!("Setting current_task_id to: {}", id);
-            state["current_task_id"] = Value::String(id);
-            save_state(&state)?;
+        packet_meta.insert("title".to_string(), Value::String(title));
+        packet_meta.insert("status".to_string(), Value::String(status));
+        packet_meta.insert("phase".to_string(), Value::String(phase));
+        packet_meta
+            .entry("lane".to_string())
+            .or_insert_with(|| Value::String("normal".to_string()));
+        packet_meta
+            .entry("split_required".to_string())
+            .or_insert_with(|| Value::Bool(has_stories));
+        packet_meta
+            .entry("risk_flags".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        packet_meta
+            .entry("hard_gates".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        packet_meta
+            .entry("next_action".to_string())
+            .or_insert_with(|| Value::String("packet_brief".to_string()));
+        packet_meta
+            .entry("created_at".to_string())
+            .or_insert_with(|| Value::String(now.clone()));
+        packet_meta.insert("updated_at".to_string(), Value::String(now.clone()));
+        packet_meta.insert("artifacts".to_string(), Value::Object(artifacts));
+        packet_meta.insert("stories".to_string(), Value::Object(repaired_stories));
+
+        state["packets"][packet_id] = Value::Object(packet_meta);
+    }
+
+    if Path::new(".coding/current").exists() {
+        if let Ok(current_content) = fs::read_to_string(".coding/current") {
+            let current_content = current_content.trim();
+            let parts = current_content.split('/').collect::<Vec<_>>();
+            if parts.len() >= 2 && parts[0] == "tasks" && task_ids.contains(&parts[1].to_string()) {
+                println!("Setting current_task_id to: {}", parts[1]);
+                state["current_task_id"] = Value::String(parts[1].to_string());
+                state["current_packet_id"] = Value::Null;
+                state["current_story_id"] = Value::Null;
+            } else if parts.len() >= 4 && parts[0] == "packets" && parts[2] == "stories" {
+                let packet_id = parts[1];
+                let story_id = parts[3];
+                let story_exists = state["packets"]
+                    .get(packet_id)
+                    .and_then(|packet| packet.get("stories"))
+                    .and_then(|stories| stories.get(story_id))
+                    .is_some();
+                if story_exists {
+                    println!("Setting current story to: {}/{}", packet_id, story_id);
+                    state["current_task_id"] = Value::Null;
+                    state["current_packet_id"] = Value::String(packet_id.to_string());
+                    state["current_story_id"] = Value::String(story_id.to_string());
+                }
+            } else if parts.len() >= 2 && parts[0] == "packets" {
+                let packet_id = parts[1];
+                if state["packets"].get(packet_id).is_some() {
+                    println!("Setting current_packet_id to: {}", packet_id);
+                    state["current_task_id"] = Value::Null;
+                    state["current_packet_id"] = Value::String(packet_id.to_string());
+                    state["current_story_id"] = Value::Null;
+                }
+            }
         }
     }
 
+    let current_packet_id = state["current_packet_id"].as_str().map(String::from);
+    if let Some(packet_id) = current_packet_id {
+        if state["packets"].get(&packet_id).is_none() {
+            state["current_packet_id"] = Value::Null;
+            state["current_story_id"] = Value::Null;
+        } else if let Some(story_id) = state["current_story_id"].as_str().map(String::from) {
+            let story_exists = state["packets"]
+                .get(&packet_id)
+                .and_then(|packet| packet.get("stories"))
+                .and_then(|stories| stories.get(&story_id))
+                .is_some();
+            if !story_exists {
+                state["current_story_id"] = Value::Null;
+            }
+        }
+    }
+
+    let current_task_id = state["current_task_id"].as_str().map(String::from);
+    if let Some(task_id) = current_task_id {
+        if !task_ids.contains(&task_id) {
+            state["current_task_id"] = Value::Null;
+        }
+    }
+
+    save_state(&state)?;
     println!("State repair complete.");
     Ok(())
 }
@@ -5521,6 +5970,124 @@ mod tests {
                 .expect_err("ship should reject findings in VERIFY.md"),
             "Ship rejected: VERIFY.md has findings"
         );
+    }
+
+    #[test]
+    fn story_switch_uses_packet_state_stories() {
+        let _guard = workflow_state_guard();
+        let _ = fs::remove_dir_all(".coding/packets/PKT-0001");
+        fs::create_dir_all(".coding/packets/PKT-0001/stories/S02-state-consistency-repair")
+            .expect("story dir should be created");
+        write_text(
+            ".coding/packets/PKT-0001/stories/S02-state-consistency-repair/STORY.md",
+            "# Story: State consistency repair\n",
+        )
+        .unwrap();
+
+        let mut stories = serde_json::Map::new();
+        stories.insert(
+            "S02-state-consistency-repair".to_string(),
+            serde_json::json!({
+                "title": "State consistency repair",
+                "status": "todo",
+                "phase": "new",
+                "findings_count": 0
+            }),
+        );
+
+        let state = serde_json::json!({
+            "version": 2,
+            "current_task_id": null,
+            "current_packet_id": "PKT-0001",
+            "current_story_id": null,
+            "tasks": {},
+            "packets": {
+                "PKT-0001": {
+                    "title": "Packet",
+                    "status": "in_progress",
+                    "phase": "split_done",
+                    "stories": stories
+                }
+            }
+        });
+        save_state(&state).unwrap();
+
+        command_story_switch(&["S02-state-consistency-repair".to_string()]).unwrap();
+
+        let repaired = load_state();
+        assert_eq!(repaired["current_packet_id"].as_str(), Some("PKT-0001"));
+        assert_eq!(
+            repaired["current_story_id"].as_str(),
+            Some("S02-state-consistency-repair")
+        );
+        assert_eq!(
+            fs::read_to_string(".coding/current").unwrap(),
+            "packets/PKT-0001/stories/S02-state-consistency-repair"
+        );
+    }
+
+    #[test]
+    fn state_repair_syncs_packet_story_ship_ready_and_current_pointer() {
+        let _guard = workflow_state_guard();
+        let _ = fs::remove_dir_all(".coding/packets/PKT-0001");
+        let story_path = ".coding/packets/PKT-0001/stories/S01-done";
+        fs::create_dir_all(story_path).expect("story dir should be created");
+        write_text(
+            ".coding/packets/PKT-0001/PACKET_SHIP.md",
+            "# Packet Ship\n\n## Commit Message\n\nfix: done\n",
+        )
+        .unwrap();
+        write_text(&format!("{}/STORY.md", story_path), "# Story: Done story\n").unwrap();
+        write_text(
+            &format!("{}/VERIFY.md", story_path),
+            "# Verify\n\n## Status\n\npassed\n\n## Findings\n\n- _None_\n",
+        )
+        .unwrap();
+        write_text(
+            &format!("{}/SHIP.md", story_path),
+            "# Ship\n\n## Ready\n\ntrue\n",
+        )
+        .unwrap();
+        write_text(".coding/current", "packets/PKT-0001/stories/S01-done").unwrap();
+
+        let state = serde_json::json!({
+            "version": 2,
+            "current_task_id": "stale-task",
+            "current_packet_id": null,
+            "current_story_id": null,
+            "tasks": {},
+            "packets": {
+                "PKT-0001": {
+                    "title": "Packet",
+                    "status": "in_progress",
+                    "phase": "split_done",
+                    "stories": {
+                        "S01-done": {
+                            "title": "Done story",
+                            "status": "done",
+                            "phase": "committed",
+                            "ship_ready": "true"
+                        }
+                    }
+                }
+            }
+        });
+        save_state(&state).unwrap();
+
+        command_state_repair().unwrap();
+
+        let repaired = load_state();
+        let packet = &repaired["packets"]["PKT-0001"];
+        let story = &packet["stories"]["S01-done"];
+
+        assert_eq!(packet["status"].as_str(), Some("done"));
+        assert_eq!(packet["phase"].as_str(), Some("committed"));
+        assert_eq!(story["phase"].as_str(), Some("committed"));
+        assert_eq!(story["ship_ready"].as_bool(), Some(true));
+        assert_eq!(story["verify_status"].as_str(), Some("passed"));
+        assert_eq!(repaired["current_task_id"], Value::Null);
+        assert_eq!(repaired["current_packet_id"].as_str(), Some("PKT-0001"));
+        assert_eq!(repaired["current_story_id"].as_str(), Some("S01-done"));
     }
 
     #[test]
