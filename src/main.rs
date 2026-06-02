@@ -480,7 +480,7 @@ fn resolve_task(args: &[String]) -> CflowResult<String> {
         let current_task = fs::read_to_string(".coding/current").map_err(|e| e.to_string())?;
         let current_task = current_task.trim();
         Ok(format!(".coding/{}", current_task))
-    } else if task.starts_with(".coding/tasks/") {
+    } else if task.starts_with(".coding/tasks/") || task.starts_with("/") || task.starts_with("./") {
         Ok(task)
     } else {
         Ok(format!(".coding/tasks/{}", task))
@@ -3190,6 +3190,636 @@ fn validate_packet_ship(data: &Value) -> CflowResult<()> {
     Ok(())
 }
 
+
+#[derive(Debug, Clone)]
+struct Story {
+    id: String,
+    title: String,
+    status: String,
+    date: String,
+    agent: String,
+    packet: String,
+    raw_entry: String,
+}
+
+#[derive(Debug, Clone)]
+struct PacketEntry {
+    id: String,
+    title: String,
+    status: String,
+    date: String,
+    agent: String,
+    stories: Vec<String>,
+    raw_entry: String,
+}
+
+fn is_story_heading(line: &str) -> Option<(String, String)> {
+    if !line.starts_with("## S-") {
+        return None;
+    }
+    let after_prefix = &line[5..]; // Skip "## S-"
+    let colon_idx = after_prefix.find(':')?;
+    let id_num_str = &after_prefix[..colon_idx];
+    if id_num_str.len() == 4 && id_num_str.chars().all(|c| c.is_ascii_digit()) {
+        let id = format!("S-{}", id_num_str);
+        let title = after_prefix[colon_idx + 1..].trim().to_string();
+        Some((id, title))
+    } else {
+        None
+    }
+}
+
+fn is_packet_heading(line: &str) -> Option<(String, String)> {
+    if !line.starts_with("## PKT-") {
+        return None;
+    }
+    let after_prefix = &line[7..]; // Skip "## PKT-"
+    let colon_idx = after_prefix.find(':')?;
+    let id_num_str = &after_prefix[..colon_idx];
+    if id_num_str.len() == 4 && id_num_str.chars().all(|c| c.is_ascii_digit()) {
+        let id = format!("PKT-{}", id_num_str);
+        let title = after_prefix[colon_idx + 1..].trim().to_string();
+        Some((id, title))
+    } else {
+        None
+    }
+}
+
+fn parse_stories_file(content: &str) -> (String, Vec<Story>) {
+    let mut header = String::new();
+    let mut stories = Vec::new();
+    let mut current_story: Option<Story> = None;
+    let mut in_stories = false;
+    
+    for line in content.lines() {
+        if let Some((id, title)) = is_story_heading(line) {
+            in_stories = true;
+            if let Some(story) = current_story.take() {
+                stories.push(story);
+            }
+            current_story = Some(Story {
+                id,
+                title,
+                status: "unknown".to_string(),
+                date: "unknown".to_string(),
+                agent: "unknown".to_string(),
+                packet: "unknown".to_string(),
+                raw_entry: line.to_string(),
+            });
+            continue;
+        }
+        
+        if in_stories {
+            if let Some(ref mut story) = current_story {
+                story.raw_entry.push('\n');
+                story.raw_entry.push_str(line);
+                
+                let trimmed = line.trim();
+                if trimmed.starts_with("Status:") {
+                    story.status = trimmed["Status:".len()..].trim().to_string();
+                } else if trimmed.starts_with("Date:") {
+                    story.date = trimmed["Date:".len()..].trim().to_string();
+                } else if trimmed.starts_with("Agent:") {
+                    story.agent = trimmed["Agent:".len()..].trim().to_string();
+                } else if trimmed.starts_with("Packet:") {
+                    story.packet = trimmed["Packet:".len()..].trim().to_string();
+                }
+            }
+        } else {
+            header.push_str(line);
+            header.push('\n');
+        }
+    }
+    
+    if let Some(story) = current_story {
+        stories.push(story);
+    }
+    
+    (header, stories)
+}
+
+fn write_stories_file(header: &str, stories: &[Story]) -> String {
+    let mut output = header.to_string();
+    if !output.ends_with('\n') && !output.is_empty() {
+        output.push('\n');
+    }
+    for (i, story) in stories.iter().enumerate() {
+        output.push_str(&story.raw_entry);
+        if i < stories.len() - 1 {
+            output.push('\n');
+        }
+    }
+    output
+}
+
+fn parse_packets_file(content: &str) -> (String, Vec<PacketEntry>) {
+    let mut header = String::new();
+    let mut packets = Vec::new();
+    let mut current_pkt: Option<PacketEntry> = None;
+    let mut in_packets = false;
+    
+    for line in content.lines() {
+        if let Some((id, title)) = is_packet_heading(line) {
+            in_packets = true;
+            if let Some(pkt) = current_pkt.take() {
+                packets.push(pkt);
+            }
+            current_pkt = Some(PacketEntry {
+                id,
+                title,
+                status: "unknown".to_string(),
+                date: "unknown".to_string(),
+                agent: "unknown".to_string(),
+                stories: Vec::new(),
+                raw_entry: line.to_string(),
+            });
+            continue;
+        }
+        
+        if in_packets {
+            if let Some(ref mut pkt) = current_pkt {
+                pkt.raw_entry.push('\n');
+                pkt.raw_entry.push_str(line);
+                
+                let trimmed = line.trim();
+                if trimmed.starts_with("Status:") {
+                    pkt.status = trimmed["Status:".len()..].trim().to_string();
+                } else if trimmed.starts_with("Date:") {
+                    pkt.date = trimmed["Date:".len()..].trim().to_string();
+                } else if trimmed.starts_with("Agent:") {
+                    pkt.agent = trimmed["Agent:".len()..].trim().to_string();
+                } else if trimmed.starts_with("Stories:") {
+                    let stories_str = trimmed["Stories:".len()..].trim();
+                    pkt.stories = stories_str
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+            }
+        } else {
+            header.push_str(line);
+            header.push('\n');
+        }
+    }
+    
+    if let Some(pkt) = current_pkt {
+        packets.push(pkt);
+    }
+    
+    (header, packets)
+}
+
+fn write_packets_file(header: &str, packets: &[PacketEntry]) -> String {
+    let mut output = header.to_string();
+    if !output.ends_with('\n') && !output.is_empty() {
+        output.push('\n');
+    }
+    for (i, pkt) in packets.iter().enumerate() {
+        output.push_str(&pkt.raw_entry);
+        if i < packets.len() - 1 {
+            output.push('\n');
+        }
+    }
+    output
+}
+
+fn update_story_metadata_in_raw(raw: &str, status: &str, packet: &str) -> String {
+    let mut lines = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Status:") {
+            let indent = line.len() - line.trim_start().len();
+            lines.push(format!("{:width$}Status: {}", "", status, width = indent));
+        } else if trimmed.starts_with("Packet:") {
+            let indent = line.len() - line.trim_start().len();
+            lines.push(format!("{:width$}Packet: {}", "", packet, width = indent));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    lines.join("\n")
+}
+
+fn command_story_add(args: &[String]) -> CflowResult<()> {
+    let title = get_arg(args, "--title", "");
+    if title.is_empty() {
+        return Err("Missing --title argument".to_string());
+    }
+    let agent = get_arg(args, "--agent", "codex");
+    
+    let task_path = resolve_task(args)?;
+    if !Path::new(&task_path).exists() {
+        return Err(format!("Task folder does not exist: {}", task_path));
+    }
+    
+    let stories_file = format!("{}/stories.md", task_path);
+    let mut header = "# Stories\n\n".to_string();
+    let mut stories = Vec::new();
+    if Path::new(&stories_file).exists() {
+        let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
+        let parsed = parse_stories_file(&content);
+        header = parsed.0;
+        stories = parsed.1;
+    }
+    
+    let mut max_id = 0;
+    for s in &stories {
+        if s.id.starts_with("S-") {
+            if let Ok(num) = s.id[2..].parse::<u32>() {
+                if num > max_id {
+                    max_id = num;
+                }
+            }
+        }
+    }
+    
+    let next_id = format!("S-{:04}", max_id + 1);
+    let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+    
+    let new_story_raw = format!(
+        "## {}: {}\n\nStatus: draft\nDate: {}\nAgent: {}\nPacket: None\n\n### Context\nTODO\n\n### Acceptance Criteria\n- TODO\n\n### Notes\nTODO\n",
+        next_id, title, date_str, agent
+    );
+    
+    let new_story = Story {
+        id: next_id.clone(),
+        title,
+        status: "draft".to_string(),
+        date: date_str,
+        agent,
+        packet: "None".to_string(),
+        raw_entry: new_story_raw,
+    };
+    
+    stories.push(new_story);
+    let new_content = write_stories_file(&header, &stories);
+    write_text(&stories_file, &new_content)?;
+    
+    println!("Story created: {}", next_id);
+    Ok(())
+}
+
+fn command_story_update(args: &[String]) -> CflowResult<()> {
+    let story_id = args.first().cloned().unwrap_or_default();
+    if story_id.is_empty() {
+        return Err("Usage: cflow story update <story-id> --status <status>".to_string());
+    }
+    let status = get_arg(args, "--status", "");
+    if status.is_empty() {
+        return Err("Missing --status argument".to_string());
+    }
+    
+    let task_path = resolve_task(args)?;
+    let stories_file = format!("{}/stories.md", task_path);
+    if !Path::new(&stories_file).exists() {
+        return Err(format!("stories.md does not exist at {}", task_path));
+    }
+    
+    let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
+    let (header, mut stories) = parse_stories_file(&content);
+    
+    let mut found = false;
+    for s in &mut stories {
+        if s.id == story_id {
+            s.status = status.clone();
+            s.raw_entry = update_story_metadata_in_raw(&s.raw_entry, &s.status, &s.packet);
+            found = true;
+            break;
+        }
+    }
+    
+    if !found {
+        return Err(format!("Story not found: {}", story_id));
+    }
+    
+    let new_content = write_stories_file(&header, &stories);
+    write_text(&stories_file, &new_content)?;
+    
+    println!("Story {} updated status to {}", story_id, status);
+    Ok(())
+}
+
+fn command_packet_create(args: &[String]) -> CflowResult<()> {
+    let is_from_ready = args.iter().any(|arg| arg == "--from-ready");
+    let stories_str = get_arg(args, "--stories", "");
+    let title_arg = get_arg(args, "--title", "");
+    let agent = get_arg(args, "--agent", "codex");
+    let force = args.iter().any(|arg| arg == "--force");
+    
+    if !is_from_ready && stories_str.is_empty() {
+        return Err("Usage: cflow packet create --stories S-0001,S-0002 OR cflow packet create --from-ready".to_string());
+    }
+    
+    let task_path = resolve_task(args)?;
+    let stories_file = format!("{}/stories.md", task_path);
+    if !Path::new(&stories_file).exists() {
+        return Err(format!("stories.md does not exist at {}", task_path));
+    }
+    let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
+    let (header, mut stories) = parse_stories_file(&content);
+    
+    let mut selected_story_ids = Vec::new();
+    if is_from_ready {
+        for s in &stories {
+            if s.status == "ready" {
+                selected_story_ids.push(s.id.clone());
+            }
+        }
+        if selected_story_ids.is_empty() {
+            return Err("No ready stories found.".to_string());
+        }
+    } else {
+        selected_story_ids = stories_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>();
+    }
+    
+    if selected_story_ids.is_empty() {
+        return Err("No stories selected to create packet.".to_string());
+    }
+    
+    if selected_story_ids.len() == 1 && !force {
+        if is_from_ready {
+            return Err("Only one ready story found. Use --force to create a single-story packet.".to_string());
+        } else {
+            return Err("A packet should contain at least 2 stories. Use --force to create a single-story packet.".to_string());
+        }
+    }
+    
+    // Validate each story
+    for s_id in &selected_story_ids {
+        let mut found_story = None;
+        for s in &stories {
+            if &s.id == s_id {
+                found_story = Some(s);
+                break;
+            }
+        }
+        match found_story {
+            None => return Err(format!("Story not found: {}", s_id)),
+            Some(s) => {
+                if s.packet != "None" && !s.packet.is_empty() {
+                    return Err(format!("Story already belongs to packet: {}", s_id));
+                }
+            }
+        }
+    }
+    
+    let packets_file = format!("{}/packets.md", task_path);
+    let mut p_header = "# Packets\n\n".to_string();
+    let mut packets = Vec::new();
+    if Path::new(&packets_file).exists() {
+        let p_content = fs::read_to_string(&packets_file).map_err(|e| e.to_string())?;
+        let parsed = parse_packets_file(&p_content);
+        p_header = parsed.0;
+        packets = parsed.1;
+    }
+    
+    let mut max_pkt = 0;
+    for p in &packets {
+        if p.id.starts_with("PKT-") {
+            if let Ok(num) = p.id[4..].parse::<u32>() {
+                if num > max_pkt {
+                    max_pkt = num;
+                }
+            }
+        }
+    }
+    let next_pkt_id = format!("PKT-{:04}", max_pkt + 1);
+    
+    let title = if !title_arg.is_empty() {
+        title_arg
+    } else {
+        let stories_list = selected_story_ids.join(", ");
+        format!("Packet for {}", stories_list)
+    };
+    
+    let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let goal_str = if selected_story_ids.len() == 1 {
+        "Execute selected story as a forced single-story packet."
+    } else {
+        "Execute selected stories as one coherent implementation packet."
+    };
+    let context_str = if selected_story_ids.len() == 1 {
+        "Single-story packet was created explicitly with --force."
+    } else {
+        "TODO"
+    };
+    
+    let mut scope_bullets = String::new();
+    for s_id in &selected_story_ids {
+        scope_bullets.push_str(&format!("- {}\n", s_id));
+    }
+    let scope_bullets = scope_bullets.trim_end();
+    
+    let new_pkt_raw = format!(
+        "## {}: {}\n\nStatus: open\nDate: {}\nAgent: {}\nStories: {}\n\n### Goal\n{}\n\n### Scope\n{}\n\n### Context\n{}\n\n### Output\nTODO\n",
+        next_pkt_id, title, date_str, agent, selected_story_ids.join(", "), goal_str, scope_bullets, context_str
+    );
+    
+    let new_pkt = PacketEntry {
+        id: next_pkt_id.clone(),
+        title,
+        status: "open".to_string(),
+        date: date_str,
+        agent,
+        stories: selected_story_ids.clone(),
+        raw_entry: new_pkt_raw,
+    };
+    packets.push(new_pkt.clone());
+    
+    let new_p_content = write_packets_file(&p_header, &packets);
+    write_text(&packets_file, &new_p_content)?;
+    
+    // Update stories in stories.md
+    for s_id in &selected_story_ids {
+        for s in &mut stories {
+            if &s.id == s_id {
+                s.status = "in_packet".to_string();
+                s.packet = next_pkt_id.clone();
+                s.raw_entry = update_story_metadata_in_raw(&s.raw_entry, &s.status, &s.packet);
+            }
+        }
+    }
+    let new_s_content = write_stories_file(&header, &stories);
+    write_text(&stories_file, &new_s_content)?;
+    
+    // Create folders and files for execution compatibility
+    let packet_path = format!("packets/{}", next_pkt_id);
+    let full_path = format!(".coding/{}", packet_path);
+    ensure_dir(&format!("{}/.placeholder", full_path))?;
+    
+    write_text(&format!("{}/PACKET.md", full_path), &new_pkt.raw_entry)?;
+    
+    let mut stories_index = "# Stories\n\n".to_string();
+    for s_id in &selected_story_ids {
+        let mut s_title = "";
+        for s in &stories {
+            if &s.id == s_id {
+                s_title = &s.title;
+            }
+        }
+        stories_index.push_str(&format!("- {}: {}\n", s_id, s_title));
+    }
+    write_text(&format!("{}/STORIES.md", full_path), &stories_index)?;
+    
+    for s_id in &selected_story_ids {
+        let story_dir = format!("{}/stories/{}", full_path, s_id);
+        let story_file = format!("{}/STORY.md", story_dir);
+        ensure_dir(&format!("{}/.placeholder", story_dir))?;
+        
+        let mut s_raw = String::new();
+        for s in &stories {
+            if &s.id == s_id {
+                s_raw = s.raw_entry.clone();
+            }
+        }
+        write_text(&story_file, &s_raw)?;
+    }
+    
+    // Update state.json
+    let mut state = load_state();
+    state["current_packet_id"] = Value::String(next_pkt_id.clone());
+    state["current_story_id"] = Value::Null;
+    state["current_task_id"] = Value::Null;
+    
+    let mut packet_meta = serde_json::Map::new();
+    packet_meta.insert("title".to_string(), Value::String(new_pkt.title.clone()));
+    packet_meta.insert("status".to_string(), Value::String("open".to_string()));
+    packet_meta.insert("phase".to_string(), Value::String("split_done".to_string()));
+    packet_meta.insert("lane".to_string(), Value::String("normal".to_string()));
+    packet_meta.insert("split_required".to_string(), Value::Bool(true));
+    packet_meta.insert("risk_flags".to_string(), Value::Array(Vec::new()));
+    packet_meta.insert("hard_gates".to_string(), Value::Array(Vec::new()));
+    packet_meta.insert("next_action".to_string(), Value::String("story_flow".to_string()));
+    
+    let now_str = chrono::Local::now().to_rfc3339();
+    packet_meta.insert("created_at".to_string(), Value::String(now_str.clone()));
+    packet_meta.insert("updated_at".to_string(), Value::String(now_str));
+    
+    let mut artifacts = serde_json::Map::new();
+    artifacts.insert("request".to_string(), Value::Bool(false));
+    artifacts.insert("intake".to_string(), Value::Bool(false));
+    artifacts.insert("packet".to_string(), Value::Bool(true));
+    artifacts.insert("stories".to_string(), Value::Bool(true));
+    artifacts.insert("packet_verify".to_string(), Value::Bool(false));
+    artifacts.insert("packet_ship".to_string(), Value::Bool(false));
+    packet_meta.insert("artifacts".to_string(), Value::Object(artifacts));
+    
+    let mut state_stories = serde_json::Map::new();
+    for s_id in &selected_story_ids {
+        let mut s_title = String::new();
+        for s in &stories {
+            if &s.id == s_id {
+                s_title = s.title.clone();
+            }
+        }
+        let mut story_meta = serde_json::Map::new();
+        story_meta.insert("title".to_string(), Value::String(s_title));
+        story_meta.insert("status".to_string(), Value::String("todo".to_string()));
+        story_meta.insert("phase".to_string(), Value::String("new".to_string()));
+        story_meta.insert("findings_count".to_string(), Value::Number(0.into()));
+        state_stories.insert(s_id.clone(), Value::Object(story_meta));
+    }
+    packet_meta.insert("stories".to_string(), Value::Object(state_stories));
+    
+    state["packets"][&next_pkt_id] = Value::Object(packet_meta);
+    save_state(&state)?;
+    write_text(".coding/current", &packet_path)?;
+    
+    println!("Packet created: {}", next_pkt_id);
+    println!("Path: {}", full_path);
+    Ok(())
+}
+
+fn command_packet_list(args: &[String]) -> CflowResult<()> {
+    let status_filter = get_arg(args, "--status", "");
+    let story_filter = get_arg(args, "--story", "");
+    let agent_filter = get_arg(args, "--agent", "");
+    
+    let task_path = resolve_task(args)?;
+    let packets_file = format!("{}/packets.md", task_path);
+    if !Path::new(&packets_file).exists() {
+        println!("No packets found.");
+        return Ok(());
+    }
+    let content = fs::read_to_string(&packets_file).map_err(|e| e.to_string())?;
+    let (_, packets) = parse_packets_file(&content);
+    
+    if packets.is_empty() {
+        println!("No packets found.");
+        return Ok(());
+    }
+    
+    let mut count = 0;
+    for p in &packets {
+        if !status_filter.is_empty() && p.status != status_filter {
+            continue;
+        }
+        if !story_filter.is_empty() && !p.stories.contains(&story_filter) {
+            continue;
+        }
+        if !agent_filter.is_empty() && p.agent != agent_filter {
+            continue;
+        }
+        
+        let status_display = if p.status.is_empty() { "unknown" } else { &p.status };
+        let agent_display = if p.agent.is_empty() { "unknown" } else { &p.agent };
+        let stories_display = p.stories.join(",");
+        let stories_display = if stories_display.is_empty() { "unknown".to_string() } else { stories_display };
+        let title_display = if p.title.is_empty() { "unknown" } else { &p.title };
+        
+        println!(
+            "{:<8} {:<8} {:<7} {:<15} {}",
+            p.id, status_display, agent_display, stories_display, title_display
+        );
+        count += 1;
+    }
+    
+    if count == 0 {
+        println!("No packets found.");
+    }
+    Ok(())
+}
+
+fn command_packet_show(args: &[String]) -> CflowResult<()> {
+    let pkt_id = args.first().cloned().unwrap_or_default();
+    if pkt_id.is_empty() {
+        return Err("Usage: cflow packet show <packet-id>".to_string());
+    }
+    
+    let task_path = resolve_task(args)?;
+    let packets_file = format!("{}/packets.md", task_path);
+    if !Path::new(&packets_file).exists() {
+        return Err(format!("Packet not found: {}", pkt_id));
+    }
+    
+    let content = fs::read_to_string(&packets_file).map_err(|e| e.to_string())?;
+    let (_, packets) = parse_packets_file(&content);
+    
+    let mut found_pkt = None;
+    for p in &packets {
+        if p.id == pkt_id {
+            found_pkt = Some(p);
+            break;
+        }
+    }
+    
+    match found_pkt {
+        Some(p) => {
+            print!("{}", p.raw_entry);
+            if !p.raw_entry.ends_with('\n') {
+                println!();
+            }
+            Ok(())
+        }
+        None => Err(format!("Packet not found: {}", pkt_id)),
+    }
+}
+
 fn command_packet_new(args: &[String]) -> CflowResult<()> {
     let title = args.first().cloned().unwrap_or_default();
     if title.is_empty() {
@@ -3481,7 +4111,7 @@ fn command_packet_ship(args: &[String]) -> CflowResult<()> {
 
 fn command_packet(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
-        return Err("Usage: cflow packet new|intake|brief|split|status|verify|ship".to_string());
+        return Err("Usage: cflow packet new|intake|brief|split|status|verify|ship|create|list|show".to_string());
     }
     match args[0].as_str() {
         "new" => command_packet_new(&args[1..]),
@@ -3494,42 +4124,46 @@ fn command_packet(args: &[String]) -> CflowResult<()> {
         }
         "verify" => command_packet_verify(&args[1..]),
         "ship" => command_packet_ship(&args[1..]),
+        "create" => command_packet_create(&args[1..]),
+        "list" => command_packet_list(&args[1..]),
+        "show" => command_packet_show(&args[1..]),
         _ => Err(format!("Unknown packet command: {}", args[0])),
     }
 }
 
 fn command_story_list() -> CflowResult<()> {
     let state = load_state();
-    let Some(packet_id) = state["current_packet_id"].as_str() else {
-        println!("No current packet.");
+    let args = Vec::new();
+    let task_path = resolve_task(&args)?;
+    let stories_file = format!("{}/stories.md", task_path);
+    if !Path::new(&stories_file).exists() {
+        println!("No stories found.");
         return Ok(());
-    };
-    let Some(packet) = state["packets"].get(packet_id) else {
-        println!("Warning: Packet metadata not found in state.json.");
+    }
+    let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
+    let (_, stories) = parse_stories_file(&content);
+    
+    if stories.is_empty() {
+        println!("No stories found.");
         return Ok(());
-    };
-
-    println!("Stories for packet {}:", packet_id);
-    if let Some(stories) = packet.get("stories").and_then(|s| s.as_object()) {
-        if stories.is_empty() {
-            println!("No stories defined yet.");
+    }
+    
+    println!("Stories:");
+    for s in &stories {
+        let current_marker = if state["current_story_id"].as_str() == Some(s.id.as_str()) {
+            "*"
         } else {
-            let mut sorted_stories: Vec<_> = stories.iter().collect();
-            sorted_stories.sort_by_key(|(id, _)| *id);
-            for (id, meta) in sorted_stories {
-                let current_marker = if state["current_story_id"].as_str() == Some(id.as_str()) {
-                    "*"
-                } else {
-                    " "
-                };
-                println!(
-                    "{} {id}: {} ({})",
-                    current_marker,
-                    option_to_js_string(meta.get("status")),
-                    option_to_js_string(meta.get("phase"))
-                );
-            }
-        }
+            " "
+        };
+        let packet_display = if s.packet.is_empty() { "None" } else { &s.packet };
+        println!(
+            "{} {}: {} (Packet: {}) - {}",
+            current_marker,
+            s.id,
+            s.status,
+            packet_display,
+            s.title
+        );
     }
     Ok(())
 }
@@ -3541,62 +4175,81 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
     }
 
     let mut state = load_state();
-    let packet_id = match state["current_packet_id"].as_str() {
-        Some(id) => id.to_string(),
-        None => return Err("No current packet selected.".to_string()),
-    };
-
-    let matched_id = {
-        let packet = state["packets"]
-            .get(&packet_id)
-            .ok_or("Current packet not found in state.")?;
-        let stories = packet["stories"]
-            .as_object()
-            .ok_or("No stories in current packet.")?;
-
-        let mut found = None;
-        for id in stories.keys() {
-            if id == &target || id.starts_with(&format!("{}-", target)) {
-                found = Some(id.clone());
-                break;
-            }
+    
+    let temp_args = Vec::new();
+    let task_path_resolved = resolve_task(&temp_args)?;
+    let stories_file = format!("{}/stories.md", task_path_resolved);
+    
+    if !Path::new(&stories_file).exists() {
+        return Err(format!("stories.md not found at {}", task_path_resolved));
+    }
+    
+    let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
+    let (_, stories) = parse_stories_file(&content);
+    
+    let mut matched_story = None;
+    for s in &stories {
+        if s.id == target || s.id.starts_with(&format!("{}-", target)) {
+            matched_story = Some(s);
+            break;
         }
-        found.ok_or_else(|| format!("Story '{}' not found.", target))?
-    };
-
-    state["current_story_id"] = Value::String(matched_id.clone());
+    }
+    
+    let matched_story = matched_story.ok_or_else(|| format!("Story '{}' not found.", target))?;
+    
+    if matched_story.packet == "None" || matched_story.packet.is_empty() {
+        return Err(format!("Story '{}' does not belong to any packet yet. Create a packet first.", matched_story.id));
+    }
+    
+    state["current_packet_id"] = Value::String(matched_story.packet.clone());
+    state["current_story_id"] = Value::String(matched_story.id.clone());
     save_state(&state)?;
 
-    let story_dir = format!("packets/{}/stories/{}", packet_id, matched_id);
+    let story_dir = format!("packets/{}/stories/{}", matched_story.packet, matched_story.id);
     write_text(".coding/current", &story_dir)?;
 
-    println!("Switched to story: {}", matched_id);
+    println!("Switched to story: {}", matched_story.id);
     Ok(())
 }
 
 fn command_story_status() -> CflowResult<()> {
     let state = load_state();
-    let Some(packet_id) = state["current_packet_id"].as_str() else {
-        println!("No current packet.");
-        return Ok(());
-    };
     let Some(story_id) = state["current_story_id"].as_str() else {
         println!("No current story selected.");
         return Ok(());
     };
-
-    let packet = &state["packets"][packet_id];
-    let story = &packet["stories"][story_id];
-
-    println!("Current story: {}", story_id);
-    println!("Title: {}", option_to_js_string(story.get("title")));
-    println!("Status: {}", option_to_js_string(story.get("status")));
-    println!("Phase: {}", option_to_js_string(story.get("phase")));
-    println!(
-        "Findings: {}",
-        option_to_js_string(story.get("findings_count"))
-    );
-
+    
+    let args = Vec::new();
+    let task_path = resolve_task(&args)?;
+    let stories_file = format!("{}/stories.md", task_path);
+    if !Path::new(&stories_file).exists() {
+        println!("stories.md not found.");
+        return Ok(());
+    }
+    let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
+    let (_, stories) = parse_stories_file(&content);
+    
+    let mut found_story = None;
+    for s in &stories {
+        if s.id == story_id {
+            found_story = Some(s);
+            break;
+        }
+    }
+    
+    match found_story {
+        Some(s) => {
+            println!("Current story: {}", s.id);
+            println!("Title: {}", s.title);
+            println!("Status: {}", s.status);
+            println!("Packet: {}", s.packet);
+            println!("Date: {}", s.date);
+            println!("Agent: {}", s.agent);
+        }
+        None => {
+            println!("Story '{}' not found in stories.md", story_id);
+        }
+    }
     Ok(())
 }
 
@@ -3631,7 +4284,7 @@ fn command_story_ship(args: &[String]) -> CflowResult<()> {
 fn command_story(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
         return Err(
-            "Usage: cflow story list|switch|status|plan|coding|verify|ship|agent".to_string(),
+            "Usage: cflow story list|switch|status|plan|coding|verify|ship|agent|add|update".to_string(),
         );
     }
     match args[0].as_str() {
@@ -3642,6 +4295,8 @@ fn command_story(args: &[String]) -> CflowResult<()> {
         "coding" => command_story_coding(&args[1..]),
         "verify" => command_story_verify(&args[1..]),
         "ship" => command_story_ship(&args[1..]),
+        "add" => command_story_add(&args[1..]),
+        "update" => command_story_update(&args[1..]),
         "agent" => {
             if args.len() < 2 {
                 return Err("Usage: cflow story agent plan|coding ...".to_string());
@@ -5099,4 +5754,321 @@ Cons:
 
         assert!(error.contains("proposed, accepted, rejected, superseded"));
     }
+    #[test]
+    fn test_story_add_does_not_create_packet() {
+        let task_dir = test_task_dir("story-add");
+        let stories_file = format!("{}/stories.md", task_dir);
+        let packets_file = format!("{}/packets.md", task_dir);
+        
+        let args = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "Implement decision log".to_string(),
+            "--agent".to_string(),
+            "codex".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        
+        command_story_add(&args).unwrap();
+        
+        assert!(Path::new(&stories_file).exists());
+        assert!(!Path::new(&packets_file).exists());
+        
+        let stories_content = fs::read_to_string(&stories_file).unwrap();
+        assert!(stories_content.contains("## S-0001: Implement decision log"));
+        assert!(stories_content.contains("Status: draft"));
+        assert!(stories_content.contains("Packet: None"));
+    }
+
+    #[test]
+    fn test_multiple_story_adds_no_packet() {
+        let task_dir = test_task_dir("story-add-multiple");
+        let stories_file = format!("{}/stories.md", task_dir);
+        let packets_file = format!("{}/packets.md", task_dir);
+        
+        let args1 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "Story one".to_string(),
+            "--agent".to_string(),
+            "codex".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args1).unwrap();
+        
+        let args2 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "Story two".to_string(),
+            "--agent".to_string(),
+            "codex".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args2).unwrap();
+        
+        assert!(Path::new(&stories_file).exists());
+        assert!(!Path::new(&packets_file).exists());
+        
+        let stories_content = fs::read_to_string(&stories_file).unwrap();
+        assert!(stories_content.contains("## S-0001: Story one"));
+        assert!(stories_content.contains("## S-0002: Story two"));
+    }
+
+    #[test]
+    fn test_packet_create_with_two_stories() {
+        let task_dir = test_task_dir("pkt-create-two");
+        let stories_file = format!("{}/stories.md", task_dir);
+        let packets_file = format!("{}/packets.md", task_dir);
+        
+        // Add S-0001 & S-0002
+        let args_add1 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add1).unwrap();
+        
+        let args_add2 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S2".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add2).unwrap();
+        
+        // Update to ready
+        let args_up1 = vec![
+            "S-0001".to_string(),
+            "--status".to_string(),
+            "ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_update(&args_up1).unwrap();
+        
+        let args_up2 = vec![
+            "S-0002".to_string(),
+            "--status".to_string(),
+            "ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_update(&args_up2).unwrap();
+        
+        // Create packet
+        let args_pkt = vec![
+            "--stories".to_string(),
+            "S-0001,S-0002".to_string(),
+            "--agent".to_string(),
+            "codex".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_packet_create(&args_pkt).unwrap();
+        
+        assert!(Path::new(&packets_file).exists());
+        
+        let pkts_content = fs::read_to_string(&packets_file).unwrap();
+        assert!(pkts_content.contains("## PKT-0001: Packet for S-0001, S-0002"));
+        assert!(pkts_content.contains("Stories: S-0001, S-0002"));
+        
+        let stories_content = fs::read_to_string(&stories_file).unwrap();
+        assert!(stories_content.contains("Status: in_packet"));
+        assert!(stories_content.contains("Packet: PKT-0001"));
+    }
+
+    #[test]
+    fn test_single_story_pkt_fails_without_force() {
+        let task_dir = test_task_dir("pkt-single-fail");
+        
+        let args_add = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add).unwrap();
+        
+        let args_pkt = vec![
+            "--stories".to_string(),
+            "S-0001".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        
+        let err = command_packet_create(&args_pkt).unwrap_err();
+        assert!(err.contains("A packet should contain at least 2 stories. Use --force to create a single-story packet."));
+    }
+
+    #[test]
+    fn test_single_story_pkt_succeeds_with_force() {
+        let task_dir = test_task_dir("pkt-single-force");
+        let stories_file = format!("{}/stories.md", task_dir);
+        let packets_file = format!("{}/packets.md", task_dir);
+        
+        let args_add = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add).unwrap();
+        
+        let args_pkt = vec![
+            "--stories".to_string(),
+            "S-0001".to_string(),
+            "--force".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        
+        command_packet_create(&args_pkt).unwrap();
+        
+        assert!(Path::new(&packets_file).exists());
+        let pkts_content = fs::read_to_string(&packets_file).unwrap();
+        assert!(pkts_content.contains("## PKT-0001: Packet for S-0001"));
+        
+        let stories_content = fs::read_to_string(&stories_file).unwrap();
+        assert!(stories_content.contains("Status: in_packet"));
+        assert!(stories_content.contains("Packet: PKT-0001"));
+    }
+
+    #[test]
+    fn test_pkt_create_from_ready() {
+        let task_dir = test_task_dir("pkt-from-ready");
+        let stories_file = format!("{}/stories.md", task_dir);
+        let packets_file = format!("{}/packets.md", task_dir);
+        
+        let args_add1 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add1).unwrap();
+        
+        let args_add2 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S2".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add2).unwrap();
+        
+        let args_add3 = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S3".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add3).unwrap();
+        
+        // Update S-0001 and S-0002 to ready
+        command_story_update(&vec!["S-0001".to_string(), "--status".to_string(), "ready".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        command_story_update(&vec!["S-0002".to_string(), "--status".to_string(), "ready".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        
+        // S-0003 remains draft
+        
+        // Create from ready
+        let args_pkt = vec![
+            "--from-ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_packet_create(&args_pkt).unwrap();
+        
+        assert!(Path::new(&packets_file).exists());
+        let pkts_content = fs::read_to_string(&packets_file).unwrap();
+        assert!(pkts_content.contains("Stories: S-0001, S-0002"));
+        assert!(!pkts_content.contains("S-0003"));
+        
+        let stories_content = fs::read_to_string(&stories_file).unwrap();
+        let (_, read_stories) = parse_stories_file(&stories_content);
+        assert_eq!(read_stories[0].status, "in_packet");
+        assert_eq!(read_stories[1].status, "in_packet");
+        assert_eq!(read_stories[2].status, "draft");
+    }
+
+    #[test]
+    fn test_pkt_create_from_ready_no_stories_fails() {
+        let task_dir = test_task_dir("pkt-from-ready-none");
+        let args_add = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add).unwrap();
+        
+        let args_pkt = vec![
+            "--from-ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        
+        let err = command_packet_create(&args_pkt).unwrap_err();
+        assert!(err.contains("No ready stories found."));
+    }
+
+    #[test]
+    fn test_pkt_create_from_ready_one_story_fails_without_force() {
+        let task_dir = test_task_dir("pkt-from-ready-one");
+        let args_add = vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        command_story_add(&args_add).unwrap();
+        
+        command_story_update(&vec!["S-0001".to_string(), "--status".to_string(), "ready".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        
+        let args_pkt = vec![
+            "--from-ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ];
+        
+        let err = command_packet_create(&args_pkt).unwrap_err();
+        assert!(err.contains("Only one ready story found. Use --force to create a single-story packet."));
+    }
+
+    #[test]
+    fn test_already_packeted_story_fails() {
+        let task_dir = test_task_dir("pkt-already-packeted");
+        
+        // Add S-0001, S-0002
+        command_story_add(&vec!["add".to_string(), "--title".to_string(), "S1".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        command_story_add(&vec!["add".to_string(), "--title".to_string(), "S2".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        
+        // Create first packet
+        command_packet_create(&vec!["--stories".to_string(), "S-0001,S-0002".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        
+        // Attempt to create second packet with S-0001
+        let err = command_packet_create(&vec!["--stories".to_string(), "S-0001".to_string(), "--force".to_string(), "--task".to_string(), task_dir.clone()]).unwrap_err();
+        assert!(err.contains("Story already belongs to packet: S-0001"));
+    }
+
+    #[test]
+    fn test_invalid_story_id_fails() {
+        let task_dir = test_task_dir("pkt-invalid-story");
+        command_story_add(&vec!["add".to_string(), "--title".to_string(), "S1".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
+        
+        let err = command_packet_create(&vec!["--stories".to_string(), "S-9999,S-0001".to_string(), "--task".to_string(), task_dir.clone()]).unwrap_err();
+        assert!(err.contains("Story not found: S-9999"));
+    }
 }
+

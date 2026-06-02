@@ -48,6 +48,31 @@ cat packet_verify.json | bin/cflow packet verify --packet current
 cat packet_ship.json | bin/cflow packet ship --packet current --dry-run
 ```
 
+## Story and Packet Granularity
+
+Stories are small requirement or implementation slices.
+
+Packets are execution or handoff bundles. A packet may contain multiple stories and should only be created intentionally.
+
+Rules:
+
+- Creating a story must not create a packet.
+- Request planning may create stories, but must not create packets automatically.
+- Use `cflow packet create --stories S-0001,S-0002` to create a packet explicitly.
+- Use `cflow packet create --from-ready` to bundle all ready stories.
+- Single-story packets require `--force`.
+
+CLI Examples:
+```bash
+cflow story add --title "Implement problem list filters"
+cflow story update S-0001 --status ready
+cflow story add --title "Implement decision log"
+cflow story update S-0002 --status ready
+
+cflow packet create --from-ready
+cflow packet list
+cflow packet show PKT-0001
+```
 
 ## Quy tắc bắt buộc (Important Rules)
 
