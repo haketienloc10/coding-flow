@@ -7,6 +7,10 @@
     "scope",
     "requirements",
     "technical_approach",
+    "files_to_change",
+    "implementation_steps",
+    "test_plan",
+    "risks",
     "done_criteria"
   ],
   "properties": {
@@ -37,6 +41,7 @@
     },
     "test_plan": {
       "type": "object",
+      "required": ["planned", "result"],
       "properties": {
         "planned": { "type": "array", "items": { "type": "string" } },
         "result": { "type": "array", "items": { "type": "string" } }
@@ -46,7 +51,7 @@
     "risks": { "type": "array", "items": { "type": "string" } },
     "done_criteria": {
       "type": "object",
-      "required": ["items"],
+      "required": ["items", "verified"],
       "properties": {
         "items": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
         "verified": { "type": "array", "items": { "type": "string" } }

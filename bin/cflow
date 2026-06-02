@@ -14,12 +14,12 @@ done
 SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "$SOURCE")" && pwd)
 ROOT_DIR=$(CDPATH= cd -P -- "$SCRIPT_DIR/.." && pwd)
 
-if [ -x "$ROOT_DIR/target/release/cflow" ]; then
-  exec "$ROOT_DIR/target/release/cflow" "$@"
-fi
-
 if [ -x "$ROOT_DIR/target/debug/cflow" ]; then
   exec "$ROOT_DIR/target/debug/cflow" "$@"
+fi
+
+if [ -x "$ROOT_DIR/target/release/cflow" ]; then
+  exec "$ROOT_DIR/target/release/cflow" "$@"
 fi
 
 exec cargo run --quiet --manifest-path "$ROOT_DIR/Cargo.toml" --bin cflow -- "$@"

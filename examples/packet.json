@@ -1,0 +1,27 @@
+{
+  "goal": "Introduce a packet workflow slice without breaking tiny task flow.",
+  "scope": {
+    "in": [
+      "Create a packet brief.",
+      "Split implementation into stories.",
+      "Verify packet-level acceptance criteria."
+    ],
+    "out": [
+      "Replace the task flow entirely."
+    ]
+  },
+  "global_acceptance_criteria": [
+    "Packet commands create the expected markdown artifacts.",
+    "Story commands can operate on the current story."
+  ],
+  "technical_constraints": [
+    "Keep JSON inputs transient."
+  ],
+  "shared_data_contracts": [
+    "Packet state is stored in .coding/state.json."
+  ],
+  "validation_strategy": [
+    "Run cargo test.",
+    "Run CLI smoke tests for packet commands."
+  ]
+}

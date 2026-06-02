@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Flow Coding",
   "type": "object",
   "required": ["mode", "status", "summary", "fixed_findings", "changed_files", "notes", "next"],
   "properties": {
@@ -31,11 +33,5 @@
       "enum": ["verify", "plan", "clarify", "none"]
     }
   },
-  "allOf": [
-    {
-      "if": { "properties": { "status": { "const": "ready_for_verify" } } },
-      "then": { "properties": { "next": { "const": "verify" } } }
-    }
-  ],
   "additionalProperties": false
 }

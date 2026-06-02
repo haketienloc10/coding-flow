@@ -1,0 +1,16 @@
+{
+  "request_summary": "Add packet workflow support for a medium-risk feature.",
+  "input_type": "workflow_improvement",
+  "lane": "normal",
+  "risk_flags": [
+    "multi_file_change"
+  ],
+  "hard_gates": [],
+  "split_required": true,
+  "reason": "The change touches multiple workflow phases and should be split into stories.",
+  "next_action": "packet_brief",
+  "assumptions": [
+    "Existing task flow remains backward compatible."
+  ],
+  "clarifying_questions": []
+}

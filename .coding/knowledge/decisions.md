@@ -31,3 +31,36 @@ Decision commands read and update .coding/knowledge/decisions.md; future backlin
 
 ### Supersedes
 None
+
+## D-0002: Fallback to CLI-rendered story plan for audit fixes
+
+Status: accepted
+Date: 2026-06-02
+Agent: codex
+Related Problems: P008
+
+### Context
+story agent plan failed before code edits because plan.schema.json was rejected by Codex response_format strict schema validation.
+
+### Decision
+Use bin/cflow story plan with explicit JSON for S01, and repair schema compatibility as part of the validation/template/DX story.
+
+### Options Considered
+- Retry same agent command
+- Switch providers
+- Use CLI-rendered manual plan
+
+### Tradeoffs
+Pros:
+- Keeps workflow artifacts generated through cflow
+- unblocks current story
+- fixes the root schema issue in scope
+
+Cons:
+- Bypasses the intended planning subprocess for this story
+
+### Consequences
+P008 tracks the failure and S01 includes schema compatibility validation.
+
+### Supersedes
+None

@@ -480,7 +480,8 @@ fn resolve_task(args: &[String]) -> CflowResult<String> {
         let current_task = fs::read_to_string(".coding/current").map_err(|e| e.to_string())?;
         let current_task = current_task.trim();
         Ok(format!(".coding/{}", current_task))
-    } else if task.starts_with(".coding/tasks/") || task.starts_with("/") || task.starts_with("./") {
+    } else if task.starts_with(".coding/tasks/") || task.starts_with("/") || task.starts_with("./")
+    {
         Ok(task)
     } else {
         Ok(format!(".coding/tasks/{}", task))
@@ -3161,6 +3162,14 @@ fn render_story_md(story: &Value) -> String {
     )
 }
 
+fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
+    let mut output = template.to_string();
+    for (key, value) in replacements {
+        output = output.replace(&format!("{{{{{key}}}}}"), value);
+    }
+    output
+}
+
 fn validate_packet_verify(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["status"]), "status")?;
     assert_allowed(get_path(data, &["status"]), &["passed", "failed"], "status")?;
@@ -3168,20 +3177,33 @@ fn validate_packet_verify(data: &Value) -> CflowResult<()> {
 }
 
 fn render_packet_verify(data: &Value) -> String {
-    format!(
-        "# Packet Verify\n\n## Status\n\n{}\n\n## Goal Achieved\n\n{}\n\n## Regressions Checked\n\n{}\n\n## Findings\n\n{}\n",
-        option_to_js_string(get_path(data, &["status"])),
-        option_to_js_string(get_path(data, &["goal_achieved"])),
-        option_to_js_string(get_path(data, &["regressions_checked"])),
-        list(get_path(data, &["findings"]))
+    render_template(
+        include_str!("../templates/packet_verify.md"),
+        &[
+            ("status", option_to_js_string(get_path(data, &["status"]))),
+            (
+                "goal_achieved",
+                option_to_js_string(get_path(data, &["goal_achieved"])),
+            ),
+            (
+                "regressions_checked",
+                option_to_js_string(get_path(data, &["regressions_checked"])),
+            ),
+            ("findings", list(get_path(data, &["findings"]))),
+        ],
     )
 }
 
 fn render_packet_ship(data: &Value) -> String {
-    format!(
-        "# Packet Ship\n\n## Status\n\nshipped\n\n## Changelog\n\n{}\n\n## Commit Message\n\n```text\n{}\n```\n",
-        list(get_path(data, &["changelog"])),
-        option_to_js_string(get_path(data, &["commit_message"]))
+    render_template(
+        include_str!("../templates/packet_ship.md"),
+        &[
+            ("changelog", list(get_path(data, &["changelog"]))),
+            (
+                "commit_message",
+                option_to_js_string(get_path(data, &["commit_message"])),
+            ),
+        ],
     )
 }
 
@@ -3189,7 +3211,6 @@ fn validate_packet_ship(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["commit_message"]), "commit_message")?;
     Ok(())
 }
-
 
 #[derive(Debug, Clone)]
 struct Story {
@@ -3250,7 +3271,7 @@ fn parse_stories_file(content: &str) -> (String, Vec<Story>) {
     let mut stories = Vec::new();
     let mut current_story: Option<Story> = None;
     let mut in_stories = false;
-    
+
     for line in content.lines() {
         if let Some((id, title)) = is_story_heading(line) {
             in_stories = true;
@@ -3268,12 +3289,12 @@ fn parse_stories_file(content: &str) -> (String, Vec<Story>) {
             });
             continue;
         }
-        
+
         if in_stories {
             if let Some(ref mut story) = current_story {
                 story.raw_entry.push('\n');
                 story.raw_entry.push_str(line);
-                
+
                 let trimmed = line.trim();
                 if trimmed.starts_with("Status:") {
                     story.status = trimmed["Status:".len()..].trim().to_string();
@@ -3290,11 +3311,11 @@ fn parse_stories_file(content: &str) -> (String, Vec<Story>) {
             header.push('\n');
         }
     }
-    
+
     if let Some(story) = current_story {
         stories.push(story);
     }
-    
+
     (header, stories)
 }
 
@@ -3317,7 +3338,7 @@ fn parse_packets_file(content: &str) -> (String, Vec<PacketEntry>) {
     let mut packets = Vec::new();
     let mut current_pkt: Option<PacketEntry> = None;
     let mut in_packets = false;
-    
+
     for line in content.lines() {
         if let Some((id, title)) = is_packet_heading(line) {
             in_packets = true;
@@ -3335,12 +3356,12 @@ fn parse_packets_file(content: &str) -> (String, Vec<PacketEntry>) {
             });
             continue;
         }
-        
+
         if in_packets {
             if let Some(ref mut pkt) = current_pkt {
                 pkt.raw_entry.push('\n');
                 pkt.raw_entry.push_str(line);
-                
+
                 let trimmed = line.trim();
                 if trimmed.starts_with("Status:") {
                     pkt.status = trimmed["Status:".len()..].trim().to_string();
@@ -3362,11 +3383,11 @@ fn parse_packets_file(content: &str) -> (String, Vec<PacketEntry>) {
             header.push('\n');
         }
     }
-    
+
     if let Some(pkt) = current_pkt {
         packets.push(pkt);
     }
-    
+
     (header, packets)
 }
 
@@ -3407,12 +3428,12 @@ fn command_story_add(args: &[String]) -> CflowResult<()> {
         return Err("Missing --title argument".to_string());
     }
     let agent = get_arg(args, "--agent", "codex");
-    
+
     let task_path = resolve_task(args)?;
     if !Path::new(&task_path).exists() {
         return Err(format!("Task folder does not exist: {}", task_path));
     }
-    
+
     let stories_file = format!("{}/stories.md", task_path);
     let mut header = "# Stories\n\n".to_string();
     let mut stories = Vec::new();
@@ -3422,7 +3443,7 @@ fn command_story_add(args: &[String]) -> CflowResult<()> {
         header = parsed.0;
         stories = parsed.1;
     }
-    
+
     let mut max_id = 0;
     for s in &stories {
         if s.id.starts_with("S-") {
@@ -3433,15 +3454,15 @@ fn command_story_add(args: &[String]) -> CflowResult<()> {
             }
         }
     }
-    
+
     let next_id = format!("S-{:04}", max_id + 1);
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
-    
+
     let new_story_raw = format!(
         "## {}: {}\n\nStatus: draft\nDate: {}\nAgent: {}\nPacket: None\n\n### Context\nTODO\n\n### Acceptance Criteria\n- TODO\n\n### Notes\nTODO\n",
         next_id, title, date_str, agent
     );
-    
+
     let new_story = Story {
         id: next_id.clone(),
         title,
@@ -3451,11 +3472,11 @@ fn command_story_add(args: &[String]) -> CflowResult<()> {
         packet: "None".to_string(),
         raw_entry: new_story_raw,
     };
-    
+
     stories.push(new_story);
     let new_content = write_stories_file(&header, &stories);
     write_text(&stories_file, &new_content)?;
-    
+
     println!("Story created: {}", next_id);
     Ok(())
 }
@@ -3469,16 +3490,16 @@ fn command_story_update(args: &[String]) -> CflowResult<()> {
     if status.is_empty() {
         return Err("Missing --status argument".to_string());
     }
-    
+
     let task_path = resolve_task(args)?;
     let stories_file = format!("{}/stories.md", task_path);
     if !Path::new(&stories_file).exists() {
         return Err(format!("stories.md does not exist at {}", task_path));
     }
-    
+
     let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
     let (header, mut stories) = parse_stories_file(&content);
-    
+
     let mut found = false;
     for s in &mut stories {
         if s.id == story_id {
@@ -3488,14 +3509,14 @@ fn command_story_update(args: &[String]) -> CflowResult<()> {
             break;
         }
     }
-    
+
     if !found {
         return Err(format!("Story not found: {}", story_id));
     }
-    
+
     let new_content = write_stories_file(&header, &stories);
     write_text(&stories_file, &new_content)?;
-    
+
     println!("Story {} updated status to {}", story_id, status);
     Ok(())
 }
@@ -3506,11 +3527,11 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
     let title_arg = get_arg(args, "--title", "");
     let agent = get_arg(args, "--agent", "codex");
     let force = args.iter().any(|arg| arg == "--force");
-    
+
     if !is_from_ready && stories_str.is_empty() {
         return Err("Usage: cflow packet create --stories S-0001,S-0002 OR cflow packet create --from-ready".to_string());
     }
-    
+
     let task_path = resolve_task(args)?;
     let stories_file = format!("{}/stories.md", task_path);
     if !Path::new(&stories_file).exists() {
@@ -3518,7 +3539,7 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
     }
     let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
     let (header, mut stories) = parse_stories_file(&content);
-    
+
     let mut selected_story_ids = Vec::new();
     if is_from_ready {
         for s in &stories {
@@ -3536,19 +3557,22 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
             .filter(|s| !s.is_empty())
             .collect::<Vec<String>>();
     }
-    
+
     if selected_story_ids.is_empty() {
         return Err("No stories selected to create packet.".to_string());
     }
-    
+
     if selected_story_ids.len() == 1 && !force {
         if is_from_ready {
-            return Err("Only one ready story found. Use --force to create a single-story packet.".to_string());
+            return Err(
+                "Only one ready story found. Use --force to create a single-story packet."
+                    .to_string(),
+            );
         } else {
             return Err("A packet should contain at least 2 stories. Use --force to create a single-story packet.".to_string());
         }
     }
-    
+
     // Validate each story
     for s_id in &selected_story_ids {
         let mut found_story = None;
@@ -3567,7 +3591,7 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
             }
         }
     }
-    
+
     let packets_file = format!("{}/packets.md", task_path);
     let mut p_header = "# Packets\n\n".to_string();
     let mut packets = Vec::new();
@@ -3577,7 +3601,7 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
         p_header = parsed.0;
         packets = parsed.1;
     }
-    
+
     let mut max_pkt = 0;
     for p in &packets {
         if p.id.starts_with("PKT-") {
@@ -3589,14 +3613,14 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
         }
     }
     let next_pkt_id = format!("PKT-{:04}", max_pkt + 1);
-    
+
     let title = if !title_arg.is_empty() {
         title_arg
     } else {
         let stories_list = selected_story_ids.join(", ");
         format!("Packet for {}", stories_list)
     };
-    
+
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
     let goal_str = if selected_story_ids.len() == 1 {
         "Execute selected story as a forced single-story packet."
@@ -3608,18 +3632,18 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
     } else {
         "TODO"
     };
-    
+
     let mut scope_bullets = String::new();
     for s_id in &selected_story_ids {
         scope_bullets.push_str(&format!("- {}\n", s_id));
     }
     let scope_bullets = scope_bullets.trim_end();
-    
+
     let new_pkt_raw = format!(
         "## {}: {}\n\nStatus: open\nDate: {}\nAgent: {}\nStories: {}\n\n### Goal\n{}\n\n### Scope\n{}\n\n### Context\n{}\n\n### Output\nTODO\n",
         next_pkt_id, title, date_str, agent, selected_story_ids.join(", "), goal_str, scope_bullets, context_str
     );
-    
+
     let new_pkt = PacketEntry {
         id: next_pkt_id.clone(),
         title,
@@ -3630,10 +3654,10 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
         raw_entry: new_pkt_raw,
     };
     packets.push(new_pkt.clone());
-    
+
     let new_p_content = write_packets_file(&p_header, &packets);
     write_text(&packets_file, &new_p_content)?;
-    
+
     // Update stories in stories.md
     for s_id in &selected_story_ids {
         for s in &mut stories {
@@ -3646,14 +3670,14 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
     }
     let new_s_content = write_stories_file(&header, &stories);
     write_text(&stories_file, &new_s_content)?;
-    
+
     // Create folders and files for execution compatibility
     let packet_path = format!("packets/{}", next_pkt_id);
     let full_path = format!(".coding/{}", packet_path);
     ensure_dir(&format!("{}/.placeholder", full_path))?;
-    
+
     write_text(&format!("{}/PACKET.md", full_path), &new_pkt.raw_entry)?;
-    
+
     let mut stories_index = "# Stories\n\n".to_string();
     for s_id in &selected_story_ids {
         let mut s_title = "";
@@ -3665,12 +3689,12 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
         stories_index.push_str(&format!("- {}: {}\n", s_id, s_title));
     }
     write_text(&format!("{}/STORIES.md", full_path), &stories_index)?;
-    
+
     for s_id in &selected_story_ids {
         let story_dir = format!("{}/stories/{}", full_path, s_id);
         let story_file = format!("{}/STORY.md", story_dir);
         ensure_dir(&format!("{}/.placeholder", story_dir))?;
-        
+
         let mut s_raw = String::new();
         for s in &stories {
             if &s.id == s_id {
@@ -3679,13 +3703,13 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
         }
         write_text(&story_file, &s_raw)?;
     }
-    
+
     // Update state.json
     let mut state = load_state();
     state["current_packet_id"] = Value::String(next_pkt_id.clone());
     state["current_story_id"] = Value::Null;
     state["current_task_id"] = Value::Null;
-    
+
     let mut packet_meta = serde_json::Map::new();
     packet_meta.insert("title".to_string(), Value::String(new_pkt.title.clone()));
     packet_meta.insert("status".to_string(), Value::String("open".to_string()));
@@ -3694,12 +3718,15 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
     packet_meta.insert("split_required".to_string(), Value::Bool(true));
     packet_meta.insert("risk_flags".to_string(), Value::Array(Vec::new()));
     packet_meta.insert("hard_gates".to_string(), Value::Array(Vec::new()));
-    packet_meta.insert("next_action".to_string(), Value::String("story_flow".to_string()));
-    
+    packet_meta.insert(
+        "next_action".to_string(),
+        Value::String("story_flow".to_string()),
+    );
+
     let now_str = chrono::Local::now().to_rfc3339();
     packet_meta.insert("created_at".to_string(), Value::String(now_str.clone()));
     packet_meta.insert("updated_at".to_string(), Value::String(now_str));
-    
+
     let mut artifacts = serde_json::Map::new();
     artifacts.insert("request".to_string(), Value::Bool(false));
     artifacts.insert("intake".to_string(), Value::Bool(false));
@@ -3708,7 +3735,7 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
     artifacts.insert("packet_verify".to_string(), Value::Bool(false));
     artifacts.insert("packet_ship".to_string(), Value::Bool(false));
     packet_meta.insert("artifacts".to_string(), Value::Object(artifacts));
-    
+
     let mut state_stories = serde_json::Map::new();
     for s_id in &selected_story_ids {
         let mut s_title = String::new();
@@ -3725,11 +3752,11 @@ fn command_packet_create(args: &[String]) -> CflowResult<()> {
         state_stories.insert(s_id.clone(), Value::Object(story_meta));
     }
     packet_meta.insert("stories".to_string(), Value::Object(state_stories));
-    
+
     state["packets"][&next_pkt_id] = Value::Object(packet_meta);
     save_state(&state)?;
     write_text(".coding/current", &packet_path)?;
-    
+
     println!("Packet created: {}", next_pkt_id);
     println!("Path: {}", full_path);
     Ok(())
@@ -3739,7 +3766,7 @@ fn command_packet_list(args: &[String]) -> CflowResult<()> {
     let status_filter = get_arg(args, "--status", "");
     let story_filter = get_arg(args, "--story", "");
     let agent_filter = get_arg(args, "--agent", "");
-    
+
     let task_path = resolve_task(args)?;
     let packets_file = format!("{}/packets.md", task_path);
     if !Path::new(&packets_file).exists() {
@@ -3748,12 +3775,12 @@ fn command_packet_list(args: &[String]) -> CflowResult<()> {
     }
     let content = fs::read_to_string(&packets_file).map_err(|e| e.to_string())?;
     let (_, packets) = parse_packets_file(&content);
-    
+
     if packets.is_empty() {
         println!("No packets found.");
         return Ok(());
     }
-    
+
     let mut count = 0;
     for p in &packets {
         if !status_filter.is_empty() && p.status != status_filter {
@@ -3765,20 +3792,36 @@ fn command_packet_list(args: &[String]) -> CflowResult<()> {
         if !agent_filter.is_empty() && p.agent != agent_filter {
             continue;
         }
-        
-        let status_display = if p.status.is_empty() { "unknown" } else { &p.status };
-        let agent_display = if p.agent.is_empty() { "unknown" } else { &p.agent };
+
+        let status_display = if p.status.is_empty() {
+            "unknown"
+        } else {
+            &p.status
+        };
+        let agent_display = if p.agent.is_empty() {
+            "unknown"
+        } else {
+            &p.agent
+        };
         let stories_display = p.stories.join(",");
-        let stories_display = if stories_display.is_empty() { "unknown".to_string() } else { stories_display };
-        let title_display = if p.title.is_empty() { "unknown" } else { &p.title };
-        
+        let stories_display = if stories_display.is_empty() {
+            "unknown".to_string()
+        } else {
+            stories_display
+        };
+        let title_display = if p.title.is_empty() {
+            "unknown"
+        } else {
+            &p.title
+        };
+
         println!(
             "{:<8} {:<8} {:<7} {:<15} {}",
             p.id, status_display, agent_display, stories_display, title_display
         );
         count += 1;
     }
-    
+
     if count == 0 {
         println!("No packets found.");
     }
@@ -3790,16 +3833,16 @@ fn command_packet_show(args: &[String]) -> CflowResult<()> {
     if pkt_id.is_empty() {
         return Err("Usage: cflow packet show <packet-id>".to_string());
     }
-    
+
     let task_path = resolve_task(args)?;
     let packets_file = format!("{}/packets.md", task_path);
     if !Path::new(&packets_file).exists() {
         return Err(format!("Packet not found: {}", pkt_id));
     }
-    
+
     let content = fs::read_to_string(&packets_file).map_err(|e| e.to_string())?;
     let (_, packets) = parse_packets_file(&content);
-    
+
     let mut found_pkt = None;
     for p in &packets {
         if p.id == pkt_id {
@@ -3807,7 +3850,7 @@ fn command_packet_show(args: &[String]) -> CflowResult<()> {
             break;
         }
     }
-    
+
     match found_pkt {
         Some(p) => {
             print!("{}", p.raw_entry);
@@ -4111,7 +4154,10 @@ fn command_packet_ship(args: &[String]) -> CflowResult<()> {
 
 fn command_packet(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
-        return Err("Usage: cflow packet new|intake|brief|split|status|verify|ship|create|list|show".to_string());
+        return Err(
+            "Usage: cflow packet new|intake|brief|split|status|verify|ship|create|list|show"
+                .to_string(),
+        );
     }
     match args[0].as_str() {
         "new" => command_packet_new(&args[1..]),
@@ -4142,12 +4188,12 @@ fn command_story_list() -> CflowResult<()> {
     }
     let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
     let (_, stories) = parse_stories_file(&content);
-    
+
     if stories.is_empty() {
         println!("No stories found.");
         return Ok(());
     }
-    
+
     println!("Stories:");
     for s in &stories {
         let current_marker = if state["current_story_id"].as_str() == Some(s.id.as_str()) {
@@ -4155,14 +4201,14 @@ fn command_story_list() -> CflowResult<()> {
         } else {
             " "
         };
-        let packet_display = if s.packet.is_empty() { "None" } else { &s.packet };
+        let packet_display = if s.packet.is_empty() {
+            "None"
+        } else {
+            &s.packet
+        };
         println!(
             "{} {}: {} (Packet: {}) - {}",
-            current_marker,
-            s.id,
-            s.status,
-            packet_display,
-            s.title
+            current_marker, s.id, s.status, packet_display, s.title
         );
     }
     Ok(())
@@ -4175,18 +4221,18 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
     }
 
     let mut state = load_state();
-    
+
     let temp_args = Vec::new();
     let task_path_resolved = resolve_task(&temp_args)?;
     let stories_file = format!("{}/stories.md", task_path_resolved);
-    
+
     if !Path::new(&stories_file).exists() {
         return Err(format!("stories.md not found at {}", task_path_resolved));
     }
-    
+
     let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
     let (_, stories) = parse_stories_file(&content);
-    
+
     let mut matched_story = None;
     for s in &stories {
         if s.id == target || s.id.starts_with(&format!("{}-", target)) {
@@ -4194,18 +4240,24 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
             break;
         }
     }
-    
+
     let matched_story = matched_story.ok_or_else(|| format!("Story '{}' not found.", target))?;
-    
+
     if matched_story.packet == "None" || matched_story.packet.is_empty() {
-        return Err(format!("Story '{}' does not belong to any packet yet. Create a packet first.", matched_story.id));
+        return Err(format!(
+            "Story '{}' does not belong to any packet yet. Create a packet first.",
+            matched_story.id
+        ));
     }
-    
+
     state["current_packet_id"] = Value::String(matched_story.packet.clone());
     state["current_story_id"] = Value::String(matched_story.id.clone());
     save_state(&state)?;
 
-    let story_dir = format!("packets/{}/stories/{}", matched_story.packet, matched_story.id);
+    let story_dir = format!(
+        "packets/{}/stories/{}",
+        matched_story.packet, matched_story.id
+    );
     write_text(".coding/current", &story_dir)?;
 
     println!("Switched to story: {}", matched_story.id);
@@ -4218,7 +4270,7 @@ fn command_story_status() -> CflowResult<()> {
         println!("No current story selected.");
         return Ok(());
     };
-    
+
     let args = Vec::new();
     let task_path = resolve_task(&args)?;
     let stories_file = format!("{}/stories.md", task_path);
@@ -4228,7 +4280,7 @@ fn command_story_status() -> CflowResult<()> {
     }
     let content = fs::read_to_string(&stories_file).map_err(|e| e.to_string())?;
     let (_, stories) = parse_stories_file(&content);
-    
+
     let mut found_story = None;
     for s in &stories {
         if s.id == story_id {
@@ -4236,7 +4288,7 @@ fn command_story_status() -> CflowResult<()> {
             break;
         }
     }
-    
+
     match found_story {
         Some(s) => {
             println!("Current story: {}", s.id);
@@ -4284,7 +4336,8 @@ fn command_story_ship(args: &[String]) -> CflowResult<()> {
 fn command_story(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
         return Err(
-            "Usage: cflow story list|switch|status|plan|coding|verify|ship|agent|add|update".to_string(),
+            "Usage: cflow story list|switch|status|plan|coding|verify|ship|agent|add|update"
+                .to_string(),
         );
     }
     match args[0].as_str() {
@@ -5295,6 +5348,51 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static WORKFLOW_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct WorkflowStateGuard {
+        _lock: MutexGuard<'static, ()>,
+        state_json: Option<String>,
+        current: Option<String>,
+    }
+
+    impl Drop for WorkflowStateGuard {
+        fn drop(&mut self) {
+            match &self.state_json {
+                Some(content) => {
+                    fs::write(".coding/state.json", content).expect("state snapshot restores");
+                }
+                None => {
+                    let _ = fs::remove_file(".coding/state.json");
+                }
+            }
+
+            match &self.current {
+                Some(content) => {
+                    fs::write(".coding/current", content).expect("current snapshot restores");
+                }
+                None => {
+                    let _ = fs::remove_file(".coding/current");
+                }
+            }
+
+            let _ = fs::remove_dir_all(".coding/packets/PKT-0001");
+        }
+    }
+
+    fn workflow_state_guard() -> WorkflowStateGuard {
+        let lock = WORKFLOW_STATE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("workflow state test lock should be available");
+        WorkflowStateGuard {
+            _lock: lock,
+            state_json: fs::read_to_string(".coding/state.json").ok(),
+            current: fs::read_to_string(".coding/current").ok(),
+        }
+    }
 
     fn parse_json(input: &str) -> Value {
         serde_json::from_str(input).expect("fixture should be valid JSON")
@@ -5347,6 +5445,38 @@ mod tests {
 
         assert!(rendered.contains("# Code Plan"));
         assert!(rendered.contains("## 9. Done Criteria"));
+    }
+
+    #[test]
+    fn validates_and_renders_packet_flow_examples() {
+        let intake = parse_json(include_str!("../examples/intake.json"));
+        let packet = parse_json(include_str!("../examples/packet.json"));
+        let stories = parse_json(include_str!("../examples/stories.json"));
+        let packet_verify = parse_json(include_str!("../examples/packet_verify.json"));
+        let packet_ship = parse_json(include_str!("../examples/packet_ship.json"));
+
+        let mut classified_intake = intake.clone();
+        classify_intake(&mut classified_intake);
+        validate_intake(&classified_intake).expect("intake should validate");
+        validate_packet_brief(&packet).expect("packet should validate");
+        validate_split(&stories).expect("stories should validate");
+        validate_packet_verify(&packet_verify).expect("packet verify should validate");
+        validate_packet_ship(&packet_ship).expect("packet ship should validate");
+
+        assert!(render_packet_verify(&packet_verify).contains("# Packet Verify"));
+        assert!(render_packet_ship(&packet_ship).contains("# Packet Ship"));
+    }
+
+    #[test]
+    fn renders_verify_checks_as_readable_markdown() {
+        let data = parse_json(include_str!("../examples/verify.json"));
+
+        validate_verify(&data).expect("verify should validate");
+        let rendered = render_verify(&data);
+
+        assert!(rendered.contains("- Unit tests: passed"));
+        assert!(rendered.contains("  - Command: `npm test`"));
+        assert!(!rendered.contains("[object Object]"));
     }
 
     #[test]
@@ -5759,7 +5889,7 @@ Cons:
         let task_dir = test_task_dir("story-add");
         let stories_file = format!("{}/stories.md", task_dir);
         let packets_file = format!("{}/packets.md", task_dir);
-        
+
         let args = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5769,12 +5899,12 @@ Cons:
             "--task".to_string(),
             task_dir.clone(),
         ];
-        
+
         command_story_add(&args).unwrap();
-        
+
         assert!(Path::new(&stories_file).exists());
         assert!(!Path::new(&packets_file).exists());
-        
+
         let stories_content = fs::read_to_string(&stories_file).unwrap();
         assert!(stories_content.contains("## S-0001: Implement decision log"));
         assert!(stories_content.contains("Status: draft"));
@@ -5786,7 +5916,7 @@ Cons:
         let task_dir = test_task_dir("story-add-multiple");
         let stories_file = format!("{}/stories.md", task_dir);
         let packets_file = format!("{}/packets.md", task_dir);
-        
+
         let args1 = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5797,7 +5927,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args1).unwrap();
-        
+
         let args2 = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5808,10 +5938,10 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args2).unwrap();
-        
+
         assert!(Path::new(&stories_file).exists());
         assert!(!Path::new(&packets_file).exists());
-        
+
         let stories_content = fs::read_to_string(&stories_file).unwrap();
         assert!(stories_content.contains("## S-0001: Story one"));
         assert!(stories_content.contains("## S-0002: Story two"));
@@ -5819,10 +5949,11 @@ Cons:
 
     #[test]
     fn test_packet_create_with_two_stories() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-create-two");
         let stories_file = format!("{}/stories.md", task_dir);
         let packets_file = format!("{}/packets.md", task_dir);
-        
+
         // Add S-0001 & S-0002
         let args_add1 = vec![
             "add".to_string(),
@@ -5832,7 +5963,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add1).unwrap();
-        
+
         let args_add2 = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5841,7 +5972,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add2).unwrap();
-        
+
         // Update to ready
         let args_up1 = vec![
             "S-0001".to_string(),
@@ -5851,7 +5982,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_update(&args_up1).unwrap();
-        
+
         let args_up2 = vec![
             "S-0002".to_string(),
             "--status".to_string(),
@@ -5860,7 +5991,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_update(&args_up2).unwrap();
-        
+
         // Create packet
         let args_pkt = vec![
             "--stories".to_string(),
@@ -5871,13 +6002,13 @@ Cons:
             task_dir.clone(),
         ];
         command_packet_create(&args_pkt).unwrap();
-        
+
         assert!(Path::new(&packets_file).exists());
-        
+
         let pkts_content = fs::read_to_string(&packets_file).unwrap();
         assert!(pkts_content.contains("## PKT-0001: Packet for S-0001, S-0002"));
         assert!(pkts_content.contains("Stories: S-0001, S-0002"));
-        
+
         let stories_content = fs::read_to_string(&stories_file).unwrap();
         assert!(stories_content.contains("Status: in_packet"));
         assert!(stories_content.contains("Packet: PKT-0001"));
@@ -5885,8 +6016,9 @@ Cons:
 
     #[test]
     fn test_single_story_pkt_fails_without_force() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-single-fail");
-        
+
         let args_add = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5895,24 +6027,25 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add).unwrap();
-        
+
         let args_pkt = vec![
             "--stories".to_string(),
             "S-0001".to_string(),
             "--task".to_string(),
             task_dir.clone(),
         ];
-        
+
         let err = command_packet_create(&args_pkt).unwrap_err();
         assert!(err.contains("A packet should contain at least 2 stories. Use --force to create a single-story packet."));
     }
 
     #[test]
     fn test_single_story_pkt_succeeds_with_force() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-single-force");
         let stories_file = format!("{}/stories.md", task_dir);
         let packets_file = format!("{}/packets.md", task_dir);
-        
+
         let args_add = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5921,7 +6054,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add).unwrap();
-        
+
         let args_pkt = vec![
             "--stories".to_string(),
             "S-0001".to_string(),
@@ -5929,13 +6062,13 @@ Cons:
             "--task".to_string(),
             task_dir.clone(),
         ];
-        
+
         command_packet_create(&args_pkt).unwrap();
-        
+
         assert!(Path::new(&packets_file).exists());
         let pkts_content = fs::read_to_string(&packets_file).unwrap();
         assert!(pkts_content.contains("## PKT-0001: Packet for S-0001"));
-        
+
         let stories_content = fs::read_to_string(&stories_file).unwrap();
         assert!(stories_content.contains("Status: in_packet"));
         assert!(stories_content.contains("Packet: PKT-0001"));
@@ -5943,10 +6076,11 @@ Cons:
 
     #[test]
     fn test_pkt_create_from_ready() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-from-ready");
         let stories_file = format!("{}/stories.md", task_dir);
         let packets_file = format!("{}/packets.md", task_dir);
-        
+
         let args_add1 = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5955,7 +6089,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add1).unwrap();
-        
+
         let args_add2 = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5964,7 +6098,7 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add2).unwrap();
-        
+
         let args_add3 = vec![
             "add".to_string(),
             "--title".to_string(),
@@ -5973,13 +6107,27 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add3).unwrap();
-        
+
         // Update S-0001 and S-0002 to ready
-        command_story_update(&vec!["S-0001".to_string(), "--status".to_string(), "ready".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        command_story_update(&vec!["S-0002".to_string(), "--status".to_string(), "ready".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        
+        command_story_update(&vec![
+            "S-0001".to_string(),
+            "--status".to_string(),
+            "ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+        command_story_update(&vec![
+            "S-0002".to_string(),
+            "--status".to_string(),
+            "ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+
         // S-0003 remains draft
-        
+
         // Create from ready
         let args_pkt = vec![
             "--from-ready".to_string(),
@@ -5987,12 +6135,12 @@ Cons:
             task_dir.clone(),
         ];
         command_packet_create(&args_pkt).unwrap();
-        
+
         assert!(Path::new(&packets_file).exists());
         let pkts_content = fs::read_to_string(&packets_file).unwrap();
         assert!(pkts_content.contains("Stories: S-0001, S-0002"));
         assert!(!pkts_content.contains("S-0003"));
-        
+
         let stories_content = fs::read_to_string(&stories_file).unwrap();
         let (_, read_stories) = parse_stories_file(&stories_content);
         assert_eq!(read_stories[0].status, "in_packet");
@@ -6002,6 +6150,7 @@ Cons:
 
     #[test]
     fn test_pkt_create_from_ready_no_stories_fails() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-from-ready-none");
         let args_add = vec![
             "add".to_string(),
@@ -6011,19 +6160,20 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add).unwrap();
-        
+
         let args_pkt = vec![
             "--from-ready".to_string(),
             "--task".to_string(),
             task_dir.clone(),
         ];
-        
+
         let err = command_packet_create(&args_pkt).unwrap_err();
         assert!(err.contains("No ready stories found."));
     }
 
     #[test]
     fn test_pkt_create_from_ready_one_story_fails_without_force() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-from-ready-one");
         let args_add = vec![
             "add".to_string(),
@@ -6033,42 +6183,91 @@ Cons:
             task_dir.clone(),
         ];
         command_story_add(&args_add).unwrap();
-        
-        command_story_update(&vec!["S-0001".to_string(), "--status".to_string(), "ready".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        
+
+        command_story_update(&vec![
+            "S-0001".to_string(),
+            "--status".to_string(),
+            "ready".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+
         let args_pkt = vec![
             "--from-ready".to_string(),
             "--task".to_string(),
             task_dir.clone(),
         ];
-        
+
         let err = command_packet_create(&args_pkt).unwrap_err();
-        assert!(err.contains("Only one ready story found. Use --force to create a single-story packet."));
+        assert!(err
+            .contains("Only one ready story found. Use --force to create a single-story packet."));
     }
 
     #[test]
     fn test_already_packeted_story_fails() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-already-packeted");
-        
+
         // Add S-0001, S-0002
-        command_story_add(&vec!["add".to_string(), "--title".to_string(), "S1".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        command_story_add(&vec!["add".to_string(), "--title".to_string(), "S2".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        
+        command_story_add(&vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+        command_story_add(&vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S2".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+
         // Create first packet
-        command_packet_create(&vec!["--stories".to_string(), "S-0001,S-0002".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        
+        command_packet_create(&vec![
+            "--stories".to_string(),
+            "S-0001,S-0002".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+
         // Attempt to create second packet with S-0001
-        let err = command_packet_create(&vec!["--stories".to_string(), "S-0001".to_string(), "--force".to_string(), "--task".to_string(), task_dir.clone()]).unwrap_err();
+        let err = command_packet_create(&vec![
+            "--stories".to_string(),
+            "S-0001".to_string(),
+            "--force".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap_err();
         assert!(err.contains("Story already belongs to packet: S-0001"));
     }
 
     #[test]
     fn test_invalid_story_id_fails() {
+        let _guard = workflow_state_guard();
         let task_dir = test_task_dir("pkt-invalid-story");
-        command_story_add(&vec!["add".to_string(), "--title".to_string(), "S1".to_string(), "--task".to_string(), task_dir.clone()]).unwrap();
-        
-        let err = command_packet_create(&vec!["--stories".to_string(), "S-9999,S-0001".to_string(), "--task".to_string(), task_dir.clone()]).unwrap_err();
+        command_story_add(&vec![
+            "add".to_string(),
+            "--title".to_string(),
+            "S1".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap();
+
+        let err = command_packet_create(&vec![
+            "--stories".to_string(),
+            "S-9999,S-0001".to_string(),
+            "--task".to_string(),
+            task_dir.clone(),
+        ])
+        .unwrap_err();
         assert!(err.contains("Story not found: S-9999"));
     }
 }
-

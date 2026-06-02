@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Flow Problem Add",
+  "type": "object",
+  "required": [
+    "title",
+    "severity",
+    "area",
+    "detected_by",
+    "phase",
+    "problem",
+    "impact",
+    "fallback",
+    "follow_up",
+    "links"
+  ],
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["open", "resolved", "cancelled"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "blocking"]
+    },
+    "area": { "type": "string", "minLength": 1 },
+    "detected_by": {
+      "type": "object",
+      "required": ["agent", "provider", "command"],
+      "properties": {
+        "agent": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "phase": { "type": "string", "minLength": 1 },
+    "problem": { "type": "string", "minLength": 1 },
+    "impact": { "type": "string", "minLength": 1 },
+    "fallback": { "type": "string", "minLength": 1 },
+    "follow_up": { "type": "string", "minLength": 1 },
+    "links": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

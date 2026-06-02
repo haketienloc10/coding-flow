@@ -1,8 +1,8 @@
 {
   "version": 2,
   "current_task_id": null,
-  "current_packet_id": "20260602-132403-add-decision-tradeoff-workflow",
-  "current_story_id": "S01-decision-workflow",
+  "current_packet_id": "20260602-160700-workflow-audit-priority-fixes",
+  "current_story_id": "S01-validation-template-dx-fixes",
   "tasks": {
     "20260602-113855-time-capsule-notes": {
       "title": "20260602-113855-time-capsule-notes",
@@ -153,6 +153,58 @@
           "title": "Add decision log workflow",
           "status": "done",
           "phase": "commit_pending",
+          "findings_count": 0
+        }
+      }
+    },
+    "20260602-160700-workflow-audit-priority-fixes": {
+      "title": "workflow audit priority fixes",
+      "status": "in_progress",
+      "phase": "split_done",
+      "lane": "normal",
+      "split_required": true,
+      "risk_flags": [
+        "touches_workflow_state",
+        "touches_validation",
+        "touches_cli_launcher",
+        "multi_area_change",
+        "large_architecture_items_present"
+      ],
+      "hard_gates": [],
+      "next_action": "packet_brief",
+      "created_at": "2026-06-02T16:07:00.769602099+07:00",
+      "updated_at": "2026-06-02T16:16:57.557725649+07:00",
+      "artifacts": {
+        "request": false,
+        "intake": true,
+        "packet": true,
+        "stories": true,
+        "packet_verify": false,
+        "packet_ship": false
+      },
+      "stories": {
+        "S01-validation-template-dx-fixes": {
+          "title": "Validation/template/DX audit fixes",
+          "status": "done",
+          "phase": "committed",
+          "findings_count": 0
+        },
+        "S02-state-consistency-repair": {
+          "title": "State consistency repair",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S03-main-module-extraction-plan": {
+          "title": "Main module extraction foundation",
+          "status": "todo",
+          "phase": "new",
+          "findings_count": 0
+        },
+        "S04-task-packet-model-unification-design": {
+          "title": "Task packet model unification design",
+          "status": "todo",
+          "phase": "new",
           "findings_count": 0
         }
       }
