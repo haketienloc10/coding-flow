@@ -399,3 +399,33 @@ Move ship state updates before git add/commit or stage state.json again before c
 
 - `src/main.rs`
 - `.coding/state.json`
+
+## P013 - Story status cannot resolve current packet stories
+
+Status: open  
+Severity: low  
+Area: workflow  
+Detected by: codex / gpt-5 / `./bin/cflow story status --story current`  
+Phase: workflow  
+Detected at: 2026-06-02T16:21:02.920284915+07:00  
+
+### Problem
+
+The story status command returned `stories.md not found` while `packet status --packet current` could read the current packet and list its stories.
+
+### Impact
+
+Agents cannot rely on `story status --story current` to inspect the active story and must use packet status or state inspection as a fallback.
+
+### Fallback
+
+Used `./bin/cflow packet status --packet current` and `.coding/state.json` inspection to determine current workflow state.
+
+### Follow-up
+
+Fix story status path resolution for the current packet/story context or document the correct command form.
+
+### Links
+
+- `src/main.rs`
+- `.coding/state.json`
