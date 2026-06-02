@@ -1094,6 +1094,7 @@ fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Optio
                 "--ephemeral".to_string(),
                 "--output-schema".to_string(),
                 "schemas/plan.schema.json".to_string(),
+                "--".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
             source: "built-in codex default".to_string(),
@@ -1107,6 +1108,7 @@ fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Optio
                 "workspace-write".to_string(),
                 "--output-schema".to_string(),
                 "schemas/coding.schema.json".to_string(),
+                "--".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
             source: "built-in codex default".to_string(),
@@ -1149,7 +1151,13 @@ fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Optio
             prompt_mode: PromptMode::Arg,
             source: "built-in gemini default".to_string(),
         },
-        ("antigravity", _) | ("custom", _) => return Ok(None),
+        ("antigravity", AgentPhase::Plan) | ("antigravity", AgentPhase::Coding) => AgentCommand {
+            cmd: "agy".to_string(),
+            args: vec!["--prompt".to_string()],
+            prompt_mode: PromptMode::Arg,
+            source: "built-in antigravity default".to_string(),
+        },
+        ("custom", _) => return Ok(None),
         _ => return Ok(None),
     };
 
@@ -1308,6 +1316,13 @@ fn display_command(command: &AgentCommand) -> String {
         .chain(command.args.iter().map(|arg| display_arg(arg)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn display_resolved_agent_command(command: &AgentCommand) -> String {
+    match command.prompt_mode {
+        PromptMode::Arg => format!("{} \"<PROMPT>\"", display_command(command)),
+        PromptMode::Stdin => display_command(command),
+    }
 }
 
 fn run_agent(
@@ -1716,7 +1731,7 @@ fn command_agent_doctor(args: &[String]) -> CflowResult<()> {
             Ok(command) => {
                 println!("{}:", phase.as_str());
                 println!("  source: {}", command.source);
-                println!("  command: {}", display_command(&command));
+                println!("  command: {}", display_resolved_agent_command(&command));
                 println!("  prompt_mode: {}", command.prompt_mode.as_str());
                 println!(
                     "  binary: {}",
@@ -2645,5 +2660,39 @@ prompt_mode = "stdin"
         assert!(command
             .args
             .contains(&"schemas/coding.schema.json".to_string()));
+        assert_eq!(command.args.last().map(String::as_str), Some("--"));
+        assert!(display_resolved_agent_command(&command).ends_with("-- \"<PROMPT>\""));
+    }
+
+    #[test]
+    fn built_in_codex_plan_uses_separator_before_prompt() {
+        let command = builtin_agent_command("codex", AgentPhase::Plan)
+            .expect("builtin should resolve")
+            .expect("command should exist");
+
+        assert_eq!(command.cmd, "codex");
+        assert_eq!(command.prompt_mode, PromptMode::Arg);
+        assert!(command
+            .args
+            .contains(&"schemas/plan.schema.json".to_string()));
+        assert_eq!(command.args.last().map(String::as_str), Some("--"));
+        assert!(display_resolved_agent_command(&command).ends_with("-- \"<PROMPT>\""));
+    }
+
+    #[test]
+    fn built_in_antigravity_uses_agy_prompt_arg_for_plan_and_coding() {
+        for phase in [AgentPhase::Plan, AgentPhase::Coding] {
+            let command = builtin_agent_command("antigravity", phase)
+                .expect("builtin should resolve")
+                .expect("command should exist");
+
+            assert_eq!(command.cmd, "agy");
+            assert_eq!(command.args, vec!["--prompt"]);
+            assert_eq!(command.prompt_mode, PromptMode::Arg);
+            assert_eq!(
+                display_resolved_agent_command(&command),
+                "agy --prompt \"<PROMPT>\""
+            );
+        }
     }
 }

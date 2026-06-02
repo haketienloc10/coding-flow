@@ -34,6 +34,7 @@ request -> plan -> coding -> verify -> ship
 * Before any file edit for coding work, check whether `PLAN.md` exists. If it does, run `bin/cflow agent coding --task current` instead of editing in main context. If falling back manually, record the reason in `CODING.md`.
 * Agent provider can be selected with `--provider` or `CFLOW_AGENT_PROVIDER`.
 * Provider fallback order is `--provider`, `CFLOW_AGENT_PROVIDER`, `.coding/agent.toml` `default_provider`, then `codex`.
+* Built-in providers include `codex`, `claude`, `gemini`, and `antigravity`.
 * Keep main context clean: rely on short `cflow` summaries.
 * Do not read long artifacts unless debugging or explicitly needed.
 * Do not ship unless `VERIFY.md` exists and verification status is `passed`.

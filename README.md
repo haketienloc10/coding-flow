@@ -92,6 +92,9 @@ bin/cflow agent coding --task current --provider claude
 bin/cflow agent plan --task current --provider gemini
 bin/cflow agent coding --task current --provider gemini
 
+bin/cflow agent plan --task current --provider antigravity
+bin/cflow agent coding --task current --provider antigravity
+
 bin/cflow agent plan --task current --provider custom
 bin/cflow agent coding --task current --provider custom
 ```
@@ -108,6 +111,7 @@ Inspect local availability:
 ```bash
 bin/cflow agent providers
 bin/cflow agent doctor --provider codex
+bin/cflow agent doctor --provider antigravity
 ```
 
 Optional `.coding/agent.toml`:
@@ -126,7 +130,21 @@ args = ["coding", "--json"]
 prompt_mode = "arg"
 ```
 
-`prompt_mode = "arg"` passes the prompt as the final argument. `prompt_mode = "stdin"` writes the prompt to child stdin. Antigravity is intentionally config/custom-only until official CLI syntax is confirmed.
+`prompt_mode = "arg"` passes the prompt as the final argument. `prompt_mode = "stdin"` writes the prompt to child stdin.
+
+Built-in Antigravity uses:
+
+```toml
+[providers.antigravity.plan]
+cmd = "agy"
+args = ["--prompt"]
+prompt_mode = "arg"
+
+[providers.antigravity.coding]
+cmd = "agy"
+args = ["--prompt"]
+prompt_mode = "arg"
+```
 
 ## Cài đặt nhanh
 
