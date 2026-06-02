@@ -2,7 +2,7 @@
   "version": 2,
   "current_task_id": null,
   "current_packet_id": "20260602-160700-workflow-audit-priority-fixes",
-  "current_story_id": "S02-state-consistency-repair",
+  "current_story_id": "S03-main-module-extraction-plan",
   "tasks": {
     "20260602-113855-time-capsule-notes": {
       "title": "20260602-113855-time-capsule-notes",
@@ -185,7 +185,7 @@
       "hard_gates": [],
       "next_action": "packet_brief",
       "created_at": "2026-06-02T16:07:00.769602099+07:00",
-      "updated_at": "2026-06-02T16:34:36.286292950+07:00",
+      "updated_at": "2026-06-02T16:39:20.150186046+07:00",
       "artifacts": {
         "request": false,
         "intake": true,
@@ -217,12 +217,14 @@
         },
         "S03-main-module-extraction-plan": {
           "title": "Main module extraction foundation",
-          "status": "todo",
-          "phase": "new",
+          "status": "done",
+          "phase": "commit_pending",
           "findings_count": 0,
-          "updated_at": "2026-06-02T16:29:48.861372993+07:00",
-          "verify_status": null,
-          "ship_ready": null
+          "updated_at": "2026-06-02T16:39:20.150186046+07:00",
+          "verify_status": "passed",
+          "ship_ready": true,
+          "committed": false,
+          "commit_sha": null
         },
         "S04-task-packet-model-unification-design": {
           "title": "Task packet model unification design",

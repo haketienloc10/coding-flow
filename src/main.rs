@@ -1,3 +1,5 @@
+mod workflow_vocab;
+
 use serde_json::Value;
 use std::env;
 use std::ffi::OsStr;
@@ -5,75 +7,14 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{self, Command, Stdio};
+use workflow_vocab::{
+    CODING_MODES, CODING_NEXT_ACTIONS, CODING_STATUSES, COMMIT_TYPES, DECISIONS_PATH,
+    DECISION_STATUSES, FINDING_SEVERITIES, FINDING_TYPES, PROBLEMS_PATH, PROBLEM_PHASES,
+    PROBLEM_SEVERITIES, PROBLEM_STATUSES, REQUEST_LANES, REQUEST_NEXT_ACTIONS, REQUEST_TYPES,
+    STEP_STATUSES, VERIFY_STATUSES,
+};
 
 type CflowResult<T> = Result<T, String>;
-
-const REQUEST_TYPES: &[&str] = &[
-    "question",
-    "unclear",
-    "investigation",
-    "new_feature",
-    "bug_fix",
-    "refactor",
-    "maintenance",
-    "documentation",
-    "test_only",
-];
-
-const REQUEST_LANES: &[&str] = &["none", "needs_clarification", "tiny", "normal", "high_risk"];
-
-const REQUEST_NEXT_ACTIONS: &[&str] = &["answer", "clarify", "investigate", "plan", "none"];
-
-const STEP_STATUSES: &[&str] = &["todo", "in_progress", "done", "blocked"];
-
-const CODING_MODES: &[&str] = &["initial", "fix"];
-
-const CODING_STATUSES: &[&str] = &["ready_for_verify", "blocked", "partial", "failed"];
-
-const CODING_NEXT_ACTIONS: &[&str] = &["verify", "plan", "clarify", "none"];
-
-const VERIFY_STATUSES: &[&str] = &["passed", "failed", "partial", "skipped"];
-
-const FINDING_SEVERITIES: &[&str] = &["low", "medium", "high", "blocking"];
-
-const FINDING_TYPES: &[&str] = &[
-    "acceptance_mismatch",
-    "test_failure",
-    "runtime_error",
-    "copy_mismatch",
-    "ui_mismatch",
-    "regression",
-    "missing_behavior",
-    "other",
-];
-
-const COMMIT_TYPES: &[&str] = &[
-    "feat", "fix", "refactor", "docs", "test", "chore", "ci", "build", "perf",
-];
-
-const PROBLEMS_PATH: &str = ".coding/knowledge/PROBLEMS.md";
-
-const DECISIONS_PATH: &str = ".coding/knowledge/decisions.md";
-
-const PROBLEM_STATUSES: &[&str] = &["open", "resolved", "cancelled"];
-
-const DECISION_STATUSES: &[&str] = &["proposed", "accepted", "rejected", "superseded"];
-
-const PROBLEM_SEVERITIES: &[&str] = &["low", "medium", "high", "blocking"];
-
-const PROBLEM_PHASES: &[&str] = &[
-    "request",
-    "intake",
-    "plan",
-    "coding",
-    "coding_fix",
-    "verify",
-    "ship",
-    "state",
-    "agent",
-    "workflow",
-    "unknown",
-];
 
 fn get_arg(args: &[String], name: &str, fallback: &str) -> String {
     let Some(index) = args.iter().position(|arg| arg == name) else {
