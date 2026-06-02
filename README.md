@@ -1,316 +1,104 @@
-# Coding Flow v0.5
+# Coding Flow
 
-Bộ workflow mỏng nhẹ cho coding task:
+`bin/cflow` là CLI workflow cho coding task. CLI lưu artifact dạng Markdown trong `.coding/` và dùng `.coding/state.json` làm state chính. JSON chỉ là input tạm thời qua `--input file` hoặc stdin.
 
-## Unified workflow model
+## Workflow chính
 
-`cflow` có một model trạng thái thống nhất:
+Dùng cho thay đổi trung bình/lớn/nguy cơ cao. Luồng này đi qua `packet -> stories -> story loop -> packet verify -> packet ship`.
 
-- Request là input ban đầu để phân loại việc cần làm.
-- Task là luồng nhỏ, độc lập, phù hợp với Tiny Flow.
-- Packet là bundle thực thi hoặc handoff cho thay đổi trung bình/lớn/nguy cơ cao.
-- Story là lát cắt implementation nhỏ nằm trong packet.
-
-`.coding/state.json` là source of truth dài hạn cho current task, current packet, current story, metadata, và artifact presence. `.coding/current` chỉ còn là legacy compatibility pointer để các command hoặc script cũ vẫn resolve được `--task current` trong giai đoạn chuyển tiếp.
-
-Chính sách migration:
-
-- CLI tiếp tục ghi `.coding/current` khi switch task, packet, hoặc story để giữ backward compatibility.
-- Các command mới nên đọc `.coding/state.json` trước, chỉ fallback sang `.coding/current` khi cần hỗ trợ task legacy.
-- Không tạo packet tự động từ story hoặc request planning; packet chỉ được tạo khi gọi `packet new` hoặc `packet create`.
-- Không xóa `.coding/current` cho đến khi các command task legacy và tài liệu deprecation đã có một chu kỳ migration riêng.
-
-## Tiny Flow (Task Flow)
-
-Dùng cho task nhỏ hoặc story-level.
 ```bash
-bin/cflow new "rename button"
-cat request.json | bin/cflow request --task current
-bin/cflow agent plan --task current
-bin/cflow agent coding --task current
-bin/cflow verify --task current
-bin/cflow ship --task current --dry-run
-```
-
-## Packet Flow
-
-Dùng cho thay đổi trung bình/lớn/nguy cơ cao.
-```bash
-# Tạo packet
-bin/cflow packet new "time capsule notes"
-
-# Intake để phân tích rủi ro & phân lane
+bin/cflow packet new "<title>"
 cat intake.json | bin/cflow packet intake --packet current
+cat packet.json | bin/cflow packet brief --packet current
+cat stories.json | bin/cflow packet split --packet current
 
-# Tạo brief cho packet
-cat brief.json | bin/cflow packet brief --packet current
-
-# Chia nhỏ thành các stories
-cat split.json | bin/cflow packet split --packet current
-
-# Xem danh sách stories
 bin/cflow story list
-
-# Switch sang story đầu tiên để implement
-bin/cflow story switch S01-storage
+bin/cflow story switch <story-id>
 bin/cflow story agent plan --story current
 bin/cflow story agent coding --story current
-bin/cflow story verify --story current
-bin/cflow story ship --story current --dry-run
+cat verify.json | bin/cflow story verify --story current
+cat ship.json | bin/cflow story ship --story current --dry-run
 
-# Switch sang story tiếp theo...
-# ...
-
-# Verify và Ship toàn bộ packet
 cat packet_verify.json | bin/cflow packet verify --packet current
 cat packet_ship.json | bin/cflow packet ship --packet current --dry-run
 ```
 
-## Story and Packet Granularity
+| Lệnh | Đầu vào |
+| --- | --- |
+| `bin/cflow packet new "<title>"` | Chuỗi title. Tạo packet mới và set current packet. |
+| `bin/cflow packet intake --packet current [--input file]` | JSON có `request_summary`, `input_type`, `lane`, `next_action`. Optional: `risk_flags`, `hard_gates`, `split_required`, `reason`, `assumptions`, `clarifying_questions`. |
+| `bin/cflow packet brief --packet current [--input file]` | JSON có `goal`, `scope.in`, `scope.out`, `global_acceptance_criteria`. Optional: `technical_constraints`, `shared_data_contracts`, `validation_strategy`. |
+| `bin/cflow packet split --packet current [--input file]` | JSON có `stories[]`; mỗi story cần `id`, `title`, `description`, `acceptance_criteria`. Optional: `files_to_change`. |
+| `bin/cflow story list` | Không cần input. Đọc current packet trong `.coding/state.json`. |
+| `bin/cflow story switch <story-id>` | Story id hoặc prefix khớp, ví dụ `S01-lib-boundary`. |
+| `bin/cflow story agent plan --story current [--provider name] [--verbose]` | Artifact của current story và packet context. Agent phải trả JSON theo `schemas/plan.schema.json`. |
+| `bin/cflow story agent coding --story current [--provider name] [--fix] [--verbose]` | Artifact của current story. Dùng `--fix` khi verify fail. Agent phải trả JSON theo `schemas/coding.schema.json`. |
+| `bin/cflow story verify --story current [--input file]` | JSON có `status`, `checks`, `manual_checks`, `acceptance_criteria_checked`, `findings`, `known_issues`, `done_criteria_verified`. |
+| `bin/cflow story ship --story current [--input file] [--dry-run\|--commit]` | JSON có `ready=true`, `commit.type`, `commit.message`, `verification.status=passed`. Cần `VERIFY.md` passed và không có findings. |
+| `bin/cflow packet verify --packet current [--input file]` | JSON có `status` là `passed` hoặc `failed`. Optional: `goal_achieved`, `regressions_checked`, `findings`. |
+| `bin/cflow packet ship --packet current [--input file] [--dry-run\|--commit]` | JSON có `commit_message`. Optional: `changelog`. Cần `PACKET_VERIFY.md` passed. |
 
-Stories are small requirement or implementation slices.
+## Tiny/task flow
 
-Packets are execution or handoff bundles. A packet may contain multiple stories and should only be created intentionally.
-
-Rules:
-
-- Creating a story must not create a packet.
-- Request planning may create stories, but must not create packets automatically.
-- Use `cflow packet create --stories S-0001,S-0002` to create a packet explicitly.
-- Use `cflow packet create --from-ready` to bundle all ready stories.
-- Single-story packets require `--force`.
-
-CLI Examples:
-```bash
-cflow story add --title "Implement problem list filters"
-cflow story update S-0001 --status ready
-cflow story add --title "Implement decision log"
-cflow story update S-0002 --status ready
-
-cflow packet create --from-ready
-cflow packet list
-cflow packet show PKT-0001
-```
-
-## Quy tắc bắt buộc (Important Rules)
-
-- JSON chỉ là transient input.
-- CLI không lưu JSON.
-- Markdown trong `.coding/tasks/<task-id>/` và `.coding/packets/<packet-id>/stories/<story-id>/` là artifact chính.
-- `.coding/state.json` là persistent JSON duy nhất và là canonical workflow state.
-- `.coding/current` là legacy pointer, không phải source of truth mới.
-- Mỗi task có folder riêng nên không ghi đè task cũ.
-- Agent oneshot giúp main context không phải giữ toàn bộ plan/coding detail.
-- Agent stdout phải là JSON transient; `cflow` validate rồi render markdown.
-- Không lưu JSON output vào `.coding/` ngoài `.coding/state.json`.
-
-## Agent providers
-
-`cflow agent plan` và `cflow agent coding` hỗ trợ chọn provider:
+Dùng cho task nhỏ, doc-only, fix gọn, hoặc việc không cần chia story.
 
 ```bash
-bin/cflow agent plan --task current --provider codex
-bin/cflow agent coding --task current --provider codex
-
-bin/cflow agent plan --task current --provider claude
-bin/cflow agent coding --task current --provider claude
-
-bin/cflow agent plan --task current --provider gemini
-bin/cflow agent coding --task current --provider gemini
-
-bin/cflow agent plan --task current --provider antigravity
-bin/cflow agent coding --task current --provider antigravity
-
-bin/cflow agent plan --task current --provider custom
-bin/cflow agent coding --task current --provider custom
+bin/cflow new "<task-name>"
+cat request.json | bin/cflow request --task current
+bin/cflow agent plan --task current
+bin/cflow agent coding --task current
+cat verify.json | bin/cflow verify --task current
+cat ship.json | bin/cflow ship --task current --dry-run
 ```
 
-Provider resolution order:
+| Lệnh | Đầu vào |
+| --- | --- |
+| `bin/cflow new "<task-name>"` | Chuỗi task name. Tạo task mới và set current task. |
+| `bin/cflow request --task current [--input file]` | JSON có `summary`, `type`, `lane`, `next_action`. Optional: `planning_needed`, `risk_flags`, `hard_gates`, `assumptions`, `clarifying_questions`. |
+| `bin/cflow agent plan --task current [--provider name] [--verbose]` | Artifact của current task. Agent phải trả JSON theo `schemas/plan.schema.json`. |
+| `bin/cflow agent coding --task current [--provider name] [--fix] [--verbose]` | Artifact của current task. Dùng `--fix` khi verify fail. Agent phải trả JSON theo `schemas/coding.schema.json`. |
+| `bin/cflow verify --task current [--input file]` | JSON có `status`, `checks`, `manual_checks`, `acceptance_criteria_checked`, `findings`, `known_issues`, `done_criteria_verified`. |
+| `bin/cflow ship --task current [--input file] [--dry-run\|--commit]` | JSON có `ready=true`, `commit.type`, `commit.message`, `verification.status=passed`. Có thể dùng existing `SHIP.md` với `--dry-run` hoặc `--commit`. |
 
-1. `--provider`
-2. `CFLOW_AGENT_PROVIDER`
-3. `.coding/agent.toml` `default_provider`
-4. fallback `codex`
+## Lệnh điều phối/tiện ích
 
-Inspect local availability:
+| Lệnh | Đầu vào |
+| --- | --- |
+| `bin/cflow status` | Không cần input. In current task/packet/story, artifact status và next command. |
+| `bin/cflow next --task current` | Optional `--task`. In next command và reason. |
+| `bin/cflow run --task current` | Optional `--task`. Tự chạy các bước agent/task có thể tự động; dừng khi cần input người hoặc task xong. |
+| `bin/cflow tasks` | Không cần input. Liệt kê task trong state. |
+| `bin/cflow switch <task-id>` | Task id. Set current task và clear current packet/story. |
+| `bin/cflow state repair` | Không cần input. Đồng bộ `.coding/state.json` từ artifact trên filesystem. |
+| `bin/cflow agent providers` | Không cần input. Liệt kê provider và command đã resolve. |
+| `bin/cflow agent doctor [--provider name]` | Optional provider. Kiểm tra command agent có sẵn sàng chạy không. |
+| `bin/cflow story add --title "<title>" [--agent name]` | Tạo story draft trong task legacy, không tạo packet. |
+| `bin/cflow story update <story-id> --status <status>` | Cập nhật status story trong task legacy. |
+| `bin/cflow packet create --stories S-0001,S-0002 [--title "..."] [--agent name] [--force]` | Tạo packet từ story đã có. Cần `--force` nếu chỉ có 1 story. |
+| `bin/cflow packet create --from-ready [--force]` | Tạo packet từ tất cả story status `ready`. |
+| `bin/cflow packet list [--status s] [--story id] [--agent name]` | Liệt kê packet legacy, có filter optional. |
+| `bin/cflow packet show <packet-id>` | In packet entry legacy. |
+| `bin/cflow problem add` | JSON qua stdin/`--input`. Ghi vào `.coding/knowledge/PROBLEMS.md`. |
+| `bin/cflow problem list [--status open\|resolved\|cancelled]` | Optional status filter. |
+| `bin/cflow problem show <id>` | Problem id, ví dụ `P001`. |
+| `bin/cflow problem resolve <id> --note "<text>"` | Problem id và note bắt buộc. |
+| `bin/cflow problem cancel <id> --note "<text>"` | Problem id và note bắt buộc. |
+| `bin/cflow problem update <id> --status <open\|resolved\|cancelled> --note "<text>"` | Cập nhật status problem. |
+| `bin/cflow decision add --title "<title>" --agent "<agent>" [--status proposed]` | Tạo decision trong `.coding/knowledge/decisions.md`. Optional: `--related`, `--context`, `--decision`, `--options`, `--pros`, `--cons`, `--consequences`. |
+| `bin/cflow decision list [--status s] [--agent name] [--related id]` | Liệt kê/filter decision. |
+| `bin/cflow decision show <id>` | Decision id, ví dụ `D-0001`. |
+| `bin/cflow decision accept <id>` | Chuyển decision `proposed` sang `accepted`. |
+| `bin/cflow decision reject <id>` | Chuyển decision `proposed` sang `rejected`. |
+| `bin/cflow decision supersede <id> --by <decision-id>` | Chuyển decision `accepted` sang `superseded`. |
+
+Có thể truyền JSON bằng file:
 
 ```bash
-bin/cflow agent providers
-bin/cflow agent doctor --provider codex
-bin/cflow agent doctor --provider antigravity
+bin/cflow packet intake --packet current --input intake.json
 ```
 
-Optional `.coding/agent.toml`:
-
-```toml
-default_provider = "codex"
-
-[providers.custom.plan]
-cmd = "my-agent"
-args = ["plan", "--json"]
-prompt_mode = "stdin"
-
-[providers.custom.coding]
-cmd = "my-agent"
-args = ["coding", "--json"]
-prompt_mode = "arg"
-```
-
-`prompt_mode = "arg"` passes the prompt as the final argument. `prompt_mode = "stdin"` writes the prompt to child stdin.
-
-Built-in Antigravity uses:
-
-```toml
-[providers.antigravity.plan]
-cmd = "agy"
-args = ["--prompt"]
-prompt_mode = "arg"
-
-[providers.antigravity.coding]
-cmd = "agy"
-args = ["--prompt"]
-prompt_mode = "arg"
-```
-
-## Problems
-
-`cflow` can store durable problems discovered during workflow execution.
-
-Problems are stored in:
-
-```text
-.coding/knowledge/PROBLEMS.md
-```
-
-Add a problem:
+Hoặc qua stdin:
 
 ```bash
-cat <<'JSON' | bin/cflow problem add
-{
-  "title": "Agent output was invalid JSON",
-  "severity": "medium",
-  "area": "agent-plan",
-  "detected_by": {
-    "agent": "codex",
-    "provider": "codex",
-    "command": "cflow agent plan --provider codex"
-  },
-  "phase": "plan",
-  "problem": "Agent returned prose instead of JSON.",
-  "impact": "PLAN.md could not be rendered.",
-  "fallback": "Retried with stricter JSON-only prompt.",
-  "follow_up": "Use schema-enforced provider mode when available.",
-  "links": []
-}
-JSON
+cat intake.json | bin/cflow packet intake --packet current
 ```
-
-List open problems:
-
-```bash
-bin/cflow problem list --status open
-```
-
-Resolve:
-
-```bash
-bin/cflow problem resolve P001 --note "Schema-enforced output added."
-```
-
-Cancel:
-
-```bash
-bin/cflow problem cancel P002 --note "No longer relevant."
-```
-
-## Decisions
-
-`cflow` can store durable decisions that explain why an agent chose one approach over another.
-
-Decisions are stored in:
-
-```text
-.coding/knowledge/decisions.md
-```
-
-Tradeoffs are part of each decision entry. Do not create `tradeoffs.md` or a separate `cflow tradeoff` workflow.
-
-Add a decision:
-
-```bash
-bin/cflow decision add --title "Use markdown decision log" --status accepted --agent codex
-```
-
-Optional body flags can prefill the entry:
-
-```bash
-bin/cflow decision add \
-  --title "Fallback to markdown parser" \
-  --status accepted \
-  --agent codex \
-  --related P-0003,P-0004 \
-  --context "Parser fallback was needed for markdown source of truth." \
-  --decision "Use a minimal markdown parser." \
-  --options "JSON source of truth,Markdown parser,Manual final report" \
-  --pros "Readable by humans,Easy to diff" \
-  --cons "Less queryable than JSON" \
-  --consequences "CLI owns lifecycle updates."
-```
-
-List and filter:
-
-```bash
-bin/cflow decision list
-bin/cflow decision list --status accepted
-bin/cflow decision list --agent codex
-bin/cflow decision list --related P-0003
-```
-
-Show and update lifecycle:
-
-```bash
-bin/cflow decision show D-0001
-bin/cflow decision accept D-0002
-bin/cflow decision reject D-0003
-bin/cflow decision supersede D-0001 --by D-0005
-```
-
-Agents should record a decision when choosing between multiple implementation approaches, using an important fallback, changing workflow direction, accepting a technical tradeoff, rejecting a reasonable option, making a choice that affects later tasks, or changing direction because of a problem. Skip tiny renames, formatting, typo fixes, behavior-neutral refactors, and obvious choices without meaningful tradeoff.
-
-## Cài đặt nhanh
-
-Từ folder `coding-flow`:
-
-```bash
-cargo install --path .
-```
-
-Sau đó dùng được command:
-
-```bash
-cflow
-```
-
-Hoặc dùng launcher tương thích trong workspace:
-
-```bash
-./bin/cflow
-```
-
-## Task resolution
-
-`bin/cflow` commands like `request`, `plan`, `coding`, `verify`, and `ship` can use `--task` to resolve which folder to use.
-- `--task current` (default): Uses `current_task_id` from `.coding/state.json`; if that is missing, falls back to `.coding/current` for legacy compatibility.
-- `--task <task-id>`: Uses `.coding/tasks/<task-id>`.
-- `--task .coding/tasks/<task-id>`: Uses the absolute or relative path directly.
-
-Story commands resolve through `current_packet_id` and `current_story_id` in `.coding/state.json`. Packet commands resolve through `current_packet_id`. `.coding/current` may still mirror these selections as `packets/<packet-id>` or `packets/<packet-id>/stories/<story-id>`, but new code should not treat that file as authoritative.
-
-## Follow-up migration stories
-
-Use these as the next implementation slices instead of folding the full architecture migration into one story:
-
-- Add a current-selection compatibility shim that centralizes reads/writes for task, packet, story, and `.coding/current`.
-- Normalize state repair and switch commands so `.coding/state.json` is always updated first and `.coding/current` is only mirrored after successful state persistence.
-- Add deprecation messaging and docs for `.coding/current`, including the conditions for removing fallback reads.
-- Add a packet-story append/update workflow so follow-up implementation stories can be created inside packet state without rerunning `packet split`.

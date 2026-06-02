@@ -198,3 +198,34 @@ Future extraction stories should move one coherent domain at a time behind crate
 
 ### Supersedes
 None
+
+## D-0007: Inline former examples fixtures in tests
+
+Status: proposed
+Date: 2026-06-02
+Agent: codex
+Related Problems: None
+
+### Context
+The examples directory is being removed, but unit tests still need representative JSON payloads for request, plan, packet, verify, and ship rendering.
+
+### Decision
+Keep compact JSON fixtures inline in the src/lib.rs test module instead of storing them as repository-level example files.
+
+### Options Considered
+- Keep examples as test fixtures
+- move fixtures to a dedicated testdata directory
+- inline fixtures in tests
+
+### Tradeoffs
+Pros:
+- Removes the unused examples directory while preserving validation and render coverage; keeps each fixture near the tests that use it.
+
+Cons:
+- Inline fixtures make the test module longer and are less reusable as command-line samples.
+
+### Consequences
+Future fixture changes should update test helper functions in src/lib.rs rather than adding examples/* files.
+
+### Supersedes
+None

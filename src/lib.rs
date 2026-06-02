@@ -5782,8 +5782,172 @@ mod tests {
         }
     }
 
-    fn parse_json(input: &str) -> Value {
-        serde_json::from_str(input).expect("fixture should be valid JSON")
+    fn request_fixture() -> Value {
+        serde_json::json!({
+            "summary": "Add a lightweight copy button to code blocks in documentation pages.",
+            "type": "new_feature",
+            "planning_needed": true,
+            "lane": "tiny",
+            "risk_flags": ["existing_behavior_change"],
+            "hard_gates": [],
+            "assumptions": [
+                "The button only affects documentation code blocks.",
+                "No backend or data model changes are required."
+            ],
+            "clarifying_questions": [],
+            "next_action": "plan"
+        })
+    }
+
+    fn plan_fixture() -> Value {
+        serde_json::json!({
+            "objective": "Add a lightweight copy button to documentation code blocks.",
+            "scope": {
+                "in": ["Show a copy button on code blocks in documentation pages."],
+                "out": ["No backend changes."]
+            },
+            "requirements": [
+                "The copy button must not break existing code block rendering."
+            ],
+            "technical_approach": [
+                "Add a small UI component for code block copy actions."
+            ],
+            "files_to_change": ["src/components/CodeBlock.tsx"],
+            "implementation_steps": [
+                {
+                    "text": "Inspect current code block rendering path.",
+                    "status": "todo"
+                }
+            ],
+            "test_plan": {
+                "planned": ["Verify copy works for a simple code block."],
+                "result": []
+            },
+            "risks": ["Clipboard API behavior may differ across browsers."],
+            "done_criteria": {
+                "items": ["Copy button appears on documentation code blocks."],
+                "verified": []
+            }
+        })
+    }
+
+    fn intake_fixture() -> Value {
+        serde_json::json!({
+            "request_summary": "Add packet workflow support for a medium-risk feature.",
+            "input_type": "workflow_improvement",
+            "lane": "normal",
+            "risk_flags": ["multi_file_change"],
+            "hard_gates": [],
+            "split_required": true,
+            "reason": "The change touches multiple workflow phases and should be split into stories.",
+            "next_action": "packet_brief",
+            "assumptions": ["Existing task flow remains backward compatible."],
+            "clarifying_questions": []
+        })
+    }
+
+    fn packet_fixture() -> Value {
+        serde_json::json!({
+            "goal": "Introduce a packet workflow slice without breaking tiny task flow.",
+            "scope": {
+                "in": ["Create a packet brief."],
+                "out": ["Replace the task flow entirely."]
+            },
+            "global_acceptance_criteria": [
+                "Packet commands create the expected markdown artifacts."
+            ],
+            "technical_constraints": ["Keep JSON inputs transient."],
+            "shared_data_contracts": ["Packet state is stored in .coding/state.json."],
+            "validation_strategy": ["Run cargo test."]
+        })
+    }
+
+    fn stories_fixture() -> Value {
+        serde_json::json!({
+            "stories": [
+                {
+                    "id": "S01-storage",
+                    "title": "Packet storage",
+                    "description": "Create packet folders and state metadata for a new packet.",
+                    "acceptance_criteria": [
+                        "A new packet has a stable id and folder."
+                    ],
+                    "files_to_change": ["src/main.rs"]
+                }
+            ]
+        })
+    }
+
+    fn packet_verify_fixture() -> Value {
+        serde_json::json!({
+            "status": "passed",
+            "goal_achieved": true,
+            "regressions_checked": true,
+            "findings": []
+        })
+    }
+
+    fn packet_ship_fixture() -> Value {
+        serde_json::json!({
+            "changelog": ["Added packet workflow support."],
+            "commit_message": "feat(workflow): add packet flow"
+        })
+    }
+
+    fn verify_fixture() -> Value {
+        serde_json::json!({
+            "status": "passed",
+            "checks": [
+                {
+                    "name": "Unit tests",
+                    "command": "npm test",
+                    "status": "passed",
+                    "notes": "Relevant tests passed."
+                }
+            ],
+            "manual_checks": [
+                "Verified copy button appears on documentation code blocks."
+            ],
+            "acceptance_criteria_checked": [
+                "Existing code block rendering still works."
+            ],
+            "findings": [],
+            "known_issues": [],
+            "done_criteria_verified": [
+                "Copy button appears on documentation code blocks."
+            ]
+        })
+    }
+
+    fn ship_fixture() -> Value {
+        serde_json::json!({
+            "ready": true,
+            "commit": {
+                "type": "feat",
+                "scope": "docs",
+                "message": "add copy button to code blocks",
+                "body": [
+                    "Add a lightweight copy interaction for documentation code blocks.",
+                    "Record verification in .coding/VERIFY.md."
+                ]
+            },
+            "changed_files": [
+                "src/components/CodeBlock.tsx",
+                ".coding/REQUEST.md",
+                ".coding/PLAN.md",
+                ".coding/VERIFY.md",
+                ".coding/SHIP.md"
+            ],
+            "summary": [
+                "Added code block copy UX.",
+                "Verified copy behavior and basic regression coverage."
+            ],
+            "verification": {
+                "status": "passed",
+                "source": ".coding/VERIFY.md"
+            },
+            "notes": []
+        })
     }
 
     fn test_task_dir(name: &str) -> String {
@@ -5814,8 +5978,8 @@ mod tests {
     }
 
     #[test]
-    fn validates_and_renders_request_example() {
-        let data = parse_json(include_str!("../examples/request.json"));
+    fn validates_and_renders_request_fixture() {
+        let data = request_fixture();
 
         validate_request(&data).expect("request should validate");
         let rendered = render_request(&data);
@@ -5825,8 +5989,8 @@ mod tests {
     }
 
     #[test]
-    fn validates_and_renders_plan_example() {
-        let data = parse_json(include_str!("../examples/plan.json"));
+    fn validates_and_renders_plan_fixture() {
+        let data = plan_fixture();
 
         validate_plan(&data).expect("plan should validate");
         let rendered = render_plan(&data);
@@ -5836,12 +6000,12 @@ mod tests {
     }
 
     #[test]
-    fn validates_and_renders_packet_flow_examples() {
-        let intake = parse_json(include_str!("../examples/intake.json"));
-        let packet = parse_json(include_str!("../examples/packet.json"));
-        let stories = parse_json(include_str!("../examples/stories.json"));
-        let packet_verify = parse_json(include_str!("../examples/packet_verify.json"));
-        let packet_ship = parse_json(include_str!("../examples/packet_ship.json"));
+    fn validates_and_renders_packet_flow_fixtures() {
+        let intake = intake_fixture();
+        let packet = packet_fixture();
+        let stories = stories_fixture();
+        let packet_verify = packet_verify_fixture();
+        let packet_ship = packet_ship_fixture();
 
         let mut classified_intake = intake.clone();
         classify_intake(&mut classified_intake);
@@ -5857,7 +6021,7 @@ mod tests {
 
     #[test]
     fn renders_verify_checks_as_readable_markdown() {
-        let data = parse_json(include_str!("../examples/verify.json"));
+        let data = verify_fixture();
 
         validate_verify(&data).expect("verify should validate");
         let rendered = render_verify(&data);
@@ -5869,7 +6033,7 @@ mod tests {
 
     #[test]
     fn ship_rejects_unpassed_verification() {
-        let mut data = parse_json(include_str!("../examples/ship.json"));
+        let mut data = ship_fixture();
         data["verification"]["status"] = Value::String("failed".to_string());
 
         assert_eq!(
@@ -6031,7 +6195,7 @@ mod tests {
 
     #[test]
     fn parses_commit_message_from_ship_markdown_fence() {
-        let rendered = render_ship(&parse_json(include_str!("../examples/ship.json")));
+        let rendered = render_ship(&ship_fixture());
 
         assert_eq!(
             parse_ship_commit_message(&rendered).as_deref(),

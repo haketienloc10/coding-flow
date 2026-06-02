@@ -512,8 +512,8 @@ rm -rf .coding
 
 bin/cflow new "time capsule notes"
 
-cat examples/request.json | bin/cflow request --task current
-cat examples/plan.json | bin/cflow plan --task current
+cat request.json | bin/cflow request --task current
+cat plan.json | bin/cflow plan --task current
 
 cat <<'JSON' | bin/cflow coding --task current
 {

@@ -1,7 +1,0 @@
-{
-  "changelog": [
-    "Added packet workflow support.",
-    "Verified packet-level acceptance criteria."
-  ],
-  "commit_message": "feat(workflow): add packet flow"
-}

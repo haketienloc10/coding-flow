@@ -1,9 +1,0 @@
-{
-  "mode": "initial",
-  "status": "ready_for_verify",
-  "summary": ["Implemented focus garden MVP"],
-  "fixed_findings": [],
-  "changed_files": ["src/App.tsx"],
-  "notes": [],
-  "next": "verify"
-}

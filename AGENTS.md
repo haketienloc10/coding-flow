@@ -1,13 +1,14 @@
 # cflow Agent Rules
 
 - Do not treat every request as one long coding task.
-- Run intake before planning.
+- For Tiny Flow, run `request` before planning.
+- For Packet Flow, run `packet intake` before packet brief/split/story planning.
 - Use packet flow when request is normal/high_risk or split_required.
 - Use story flow for implementation.
 - Do not implement more than the current story.
 - If verify fails, do not fix in main context.
-- Use story coding --fix.
-- Do not edit .coding markdown artifacts directly.
+- Use `bin/cflow story agent coding --story current --fix`.
+- Do not edit workflow markdown artifacts in `.coding` directly; use `bin/cflow ...` commands to create/update them.
 - Do not create persistent phase JSON files.
 - The only persistent JSON is .coding/state.json.
 
@@ -22,25 +23,49 @@ Record durable workflow or agent problems in:
 Use:
 
 ```bash
-bin/cflow problem add
+cat problem.json | bin/cflow problem add
 ```
 
 Record a problem when an agent command fails, JSON output is invalid, fallback is required, workflow routing is wrong, or the issue is likely to repeat.
 
-A problem entry must include:
+A problem JSON input must include:
 
 * status
 * severity
 * area
-* detected agent/provider/command
+* detected_by.agent
+* detected_by.provider
+* detected_by.command
 * phase
 * problem
 * impact
 * fallback
-* follow-up
+* follow_up
 * links
 
 Do not store long logs, full diffs, or noisy terminal output.
+
+Example:
+
+```json
+{
+  "status": "open",
+  "title": "Agent output was invalid JSON",
+  "severity": "medium",
+  "area": "agent-plan",
+  "detected_by": {
+    "agent": "codex",
+    "provider": "codex",
+    "command": "bin/cflow story agent plan --story current"
+  },
+  "phase": "plan",
+  "problem": "Agent returned prose instead of JSON.",
+  "impact": "PLAN.md could not be rendered.",
+  "fallback": "Retried with stricter JSON-only prompt.",
+  "follow_up": "Use schema-enforced provider mode when available.",
+  "links": []
+}
+```
 
 Use:
 
@@ -62,7 +87,17 @@ Record non-trivial workflow, architecture, implementation, or fallback decisions
 Use:
 
 ```bash
-bin/cflow decision add --title "<title>" --status proposed --agent "<agent-name>"
+bin/cflow decision add \
+  --title "<title>" \
+  --status proposed \
+  --agent "<agent-name>" \
+  --related "P001" \
+  --context "<why this decision is needed>" \
+  --decision "<chosen approach>" \
+  --options "<option A>,<option B>" \
+  --pros "<main benefits>" \
+  --cons "<main costs>" \
+  --consequences "<what this changes later>"
 ```
 
 Record a decision when the agent:
@@ -82,7 +117,8 @@ A decision must capture context, decision, options considered, tradeoffs, conseq
 ## Core Flow
 
 ```text
-request -> intake -> packet -> stories -> story loop (agent plan -> agent coding -> verify -> fix loop -> ship) -> packet verify -> packet ship
+tiny: request -> agent plan -> agent coding -> verify -> fix loop -> ship
+packet: packet new -> request -> packet intake -> packet brief -> packet split -> story loop (agent plan -> agent coding -> verify -> fix loop -> ship) -> packet verify -> packet ship
 ```
 
 ## Unified State Model
@@ -95,29 +131,34 @@ request -> intake -> packet -> stories -> story loop (agent plan -> agent coding
 
 ### 1. Tiny Flow
 
-Dùng cho task nhỏ hoặc story-level.
+Dùng cho task nhỏ độc lập. Tiny Flow dùng `request`; không chạy `packet intake`.
 - `bin/cflow new "<task-name>"`
-- `bin/cflow request --task current`
+- `cat request.json | bin/cflow request --task current`
 - `bin/cflow agent plan --task current`
 - `bin/cflow agent coding --task current`
-- `bin/cflow verify --task current`
-- `bin/cflow ship --task current --dry-run`
+- `cat verify.json | bin/cflow verify --task current`
+- `cat ship.json | bin/cflow ship --task current --dry-run`
+
+Phase commands that are not `agent ...` require JSON via stdin or `--input file`.
 
 ### 2. Packet Flow
 
-Dùng cho thay đổi trung bình/lớn/nguy cơ cao.
+Dùng cho thay đổi trung bình/lớn/nguy cơ cao. Packet Flow tạo `REQUEST.md` trong current packet trước `packet intake`.
 - `bin/cflow packet new "<title>"`
-- `bin/cflow packet intake --packet current`
-- `bin/cflow packet brief --packet current`
-- `bin/cflow packet split --packet current`
+- `cat request.json | bin/cflow request --task current`
+- `cat intake.json | bin/cflow packet intake --packet current`
+- `cat packet.json | bin/cflow packet brief --packet current`
+- `cat stories.json | bin/cflow packet split --packet current`
 - `bin/cflow story list`
 - `bin/cflow story switch <story-id>`
 - `bin/cflow story agent plan --story current`
 - `bin/cflow story agent coding --story current`
-- `bin/cflow story verify --story current`
-- `bin/cflow story ship --story current --dry-run`
-- `bin/cflow packet verify --packet current`
-- `bin/cflow packet ship --packet current --dry-run`
+- `cat verify.json | bin/cflow story verify --story current`
+- `cat ship.json | bin/cflow story ship --story current --dry-run`
+- `cat packet_verify.json | bin/cflow packet verify --packet current`
+- `cat packet_ship.json | bin/cflow packet ship --packet current --dry-run`
+
+Phase commands that are not `agent ...` require JSON via stdin or `--input file`.
 
 ## Story and Packet Granularity
 
@@ -125,13 +166,26 @@ Stories are small requirement or implementation slices.
 
 Packets are execution or handoff bundles. A packet may contain multiple stories and should only be created intentionally.
 
+Preferred packet flow for new normal/high_risk work:
+
+- `bin/cflow packet new "<title>"`
+- `cat request.json | bin/cflow request --task current`
+- `cat intake.json | bin/cflow packet intake --packet current`
+- `cat packet.json | bin/cflow packet brief --packet current`
+- `cat stories.json | bin/cflow packet split --packet current`
+
+Legacy task-bundling flow:
+
+- Use `story add`, `story update`, and `packet create` only when stories already exist in a task-level `stories.md`.
+- Do not use legacy task-bundling commands inside an active packet created by `packet new`.
+
 Rules:
 
 - Creating a story must not create a packet.
 - Request planning may create stories, but must not create packets automatically.
-- Use `bin/cflow packet create --stories S-0001,S-0002` to create a packet explicitly.
-- Use `bin/cflow packet create --from-ready` to bundle all ready stories.
-- Single-story packets require `--force`.
+- In legacy task-bundling flow, use `bin/cflow packet create --stories S-0001,S-0002` to create a packet explicitly.
+- In legacy task-bundling flow, use `bin/cflow packet create --from-ready` to bundle all ready stories.
+- In legacy task-bundling flow, single-story packets require `--force`.
 
 CLI Examples:
 ```bash
