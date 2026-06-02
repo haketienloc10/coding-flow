@@ -53,7 +53,11 @@ const COMMIT_TYPES: &[&str] = &[
 
 const PROBLEMS_PATH: &str = ".coding/knowledge/PROBLEMS.md";
 
+const DECISIONS_PATH: &str = ".coding/knowledge/decisions.md";
+
 const PROBLEM_STATUSES: &[&str] = &["open", "resolved", "cancelled"];
+
+const DECISION_STATUSES: &[&str] = &["proposed", "accepted", "rejected", "superseded"];
 
 const PROBLEM_SEVERITIES: &[&str] = &["low", "medium", "high", "blocking"];
 
@@ -175,9 +179,13 @@ fn slugify(text: &str) -> String {
 fn load_state() -> Value {
     if let Ok(content) = fs::read_to_string(".coding/state.json") {
         if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
-            let ver = val.get("version").and_then(|v| {
-                v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-            }).unwrap_or(1);
+            let ver = val
+                .get("version")
+                .and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                })
+                .unwrap_or(1);
             if ver < 2 {
                 val["version"] = Value::Number(2.into());
                 if val.get("packets").is_none() {
@@ -224,7 +232,8 @@ fn update_task_state(
     let mut state = load_state();
 
     let is_story = if let Some(packet_id) = state["current_packet_id"].as_str() {
-        state["packets"].get(packet_id)
+        state["packets"]
+            .get(packet_id)
             .and_then(|p| p.get("stories"))
             .and_then(|s| s.get(task_id))
             .is_some()
@@ -236,27 +245,29 @@ fn update_task_state(
         let packet_id = state["current_packet_id"].as_str().unwrap().to_string();
         let mut story_meta = state["packets"][&packet_id]["stories"][task_id].clone();
         let story_path = format!(".coding/packets/{}/stories/{}", packet_id, task_id);
-        
+
         let has_plan = Path::new(&format!("{}/PLAN.md", story_path)).exists();
         let has_coding = Path::new(&format!("{}/CODING.md", story_path)).exists();
         let has_verify = Path::new(&format!("{}/VERIFY.md", story_path)).exists();
         let has_ship = Path::new(&format!("{}/SHIP.md", story_path)).exists();
-        
+
         let mut status = story_meta["status"].as_str().unwrap_or("todo").to_string();
         if has_ship {
             status = "done".to_string();
         } else if has_coding {
             status = "in_progress".to_string();
         }
-        
+
         let phase = if let Some(p) = phase_override {
             p.to_string()
         } else {
             if has_ship {
                 "shipped".to_string()
             } else if has_verify {
-                let verify_content = fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default();
-                let verify_status = first_non_empty_section_line(&verify_content, "Status").unwrap_or_default();
+                let verify_content =
+                    fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default();
+                let verify_status =
+                    first_non_empty_section_line(&verify_content, "Status").unwrap_or_default();
                 if verify_status == "passed" {
                     "verify_passed".to_string()
                 } else {
@@ -270,20 +281,22 @@ fn update_task_state(
                 "new".to_string()
             }
         };
-        
+
         let mut findings_count = 0;
         if has_verify {
-            let verify_content = fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default();
+            let verify_content =
+                fs::read_to_string(&format!("{}/VERIFY.md", story_path)).unwrap_or_default();
             findings_count = verify_findings_count(&verify_content);
         }
-        
+
         story_meta["status"] = Value::String(status);
         story_meta["phase"] = Value::String(phase);
         story_meta["findings_count"] = Value::Number(findings_count.into());
-        
+
         state["packets"][&packet_id]["stories"][task_id] = story_meta;
-        state["packets"][&packet_id]["updated_at"] = Value::String(chrono::Local::now().to_rfc3339());
-        
+        state["packets"][&packet_id]["updated_at"] =
+            Value::String(chrono::Local::now().to_rfc3339());
+
         save_state(&state)?;
         return Ok(());
     }
@@ -449,7 +462,10 @@ fn resolve_task(args: &[String]) -> CflowResult<String> {
     let is_story = args.iter().any(|arg| arg == "--story");
     if is_story {
         let (packet_id, story_dir_name) = resolve_story_path(args)?;
-        return Ok(format!(".coding/packets/{}/stories/{}", packet_id, story_dir_name));
+        return Ok(format!(
+            ".coding/packets/{}/stories/{}",
+            packet_id, story_dir_name
+        ));
     }
 
     let task = get_arg(args, "--task", "current");
@@ -1035,6 +1051,297 @@ fn render_ship(data: &Value) -> String {
 }
 
 #[derive(Clone)]
+struct DecisionEntry {
+    id: String,
+    title: String,
+    status: String,
+    agent: String,
+    related_problems: String,
+    content: String,
+}
+
+struct DecisionAddInput {
+    title: String,
+    status: String,
+    agent: String,
+    related: String,
+    context: String,
+    decision: String,
+    options: String,
+    pros: String,
+    cons: String,
+    consequences: String,
+}
+
+fn validate_decision_status(status: &str) -> CflowResult<()> {
+    if DECISION_STATUSES.contains(&status) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid status: {}. Allowed: {}",
+            status,
+            DECISION_STATUSES.join(", ")
+        ))
+    }
+}
+
+fn parse_decision_heading(line: &str) -> Option<(String, String)> {
+    let heading = line.trim().strip_prefix("## ")?;
+    let (id, title) = heading.split_once(": ")?;
+    let digits = id.strip_prefix("D-")?;
+    if digits.len() != 4 || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some((id.to_string(), title.trim().to_string()))
+}
+
+fn metadata_field(block: &str, field: &str) -> String {
+    let prefix = format!("{field}:");
+    block
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.trim_start().starts_with("### "))
+        .find_map(|line| {
+            let rest = line.trim().strip_prefix(&prefix)?;
+            Some(rest.trim().trim_end_matches("  ").trim().to_string())
+        })
+        .unwrap_or_default()
+}
+
+fn display_unknown(value: &str) -> String {
+    if value.trim().is_empty() {
+        "unknown".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn parse_decision_block(block: &str) -> Option<DecisionEntry> {
+    let first = block.lines().next()?;
+    let (id, title) = parse_decision_heading(first)?;
+    Some(DecisionEntry {
+        id,
+        title,
+        status: display_unknown(&metadata_field(block, "Status")),
+        agent: display_unknown(&metadata_field(block, "Agent")),
+        related_problems: metadata_field(block, "Related Problems"),
+        content: block.trim_end().to_string(),
+    })
+}
+
+fn decision_entry_starts(content: &str) -> Vec<(usize, String)> {
+    let mut starts = Vec::new();
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        let clean_line = line.trim_end_matches(['\r', '\n']);
+        if let Some((entry_id, _)) = parse_decision_heading(clean_line) {
+            starts.push((offset, entry_id));
+        }
+        offset += line.len();
+    }
+    starts
+}
+
+fn parse_decision_entries(content: &str) -> Vec<DecisionEntry> {
+    let starts = decision_entry_starts(content);
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (start, _))| {
+            let end = starts
+                .get(index + 1)
+                .map(|(next_start, _)| *next_start)
+                .unwrap_or(content.len());
+            parse_decision_block(&content[*start..end])
+        })
+        .collect()
+}
+
+fn next_decision_id(content: &str) -> String {
+    let max_id = parse_decision_entries(content)
+        .iter()
+        .filter_map(|entry| entry.id.strip_prefix("D-")?.parse::<usize>().ok())
+        .max()
+        .unwrap_or(0);
+    format!("D-{max_id:04}", max_id = max_id + 1)
+}
+
+fn markdown_bullets(text: &str) -> String {
+    if text.trim().is_empty() {
+        return "- TODO".to_string();
+    }
+
+    text.split([',', '\n'])
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            if item.starts_with("- ") {
+                item.to_string()
+            } else {
+                format!("- {item}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_decision_entry(id: &str, date: &str, input: &DecisionAddInput) -> String {
+    format!(
+        "## {}: {}\n\nStatus: {}\nDate: {}\nAgent: {}\nRelated Problems: {}\n\n### Context\n{}\n\n### Decision\n{}\n\n### Options Considered\n{}\n\n### Tradeoffs\nPros:\n{}\n\nCons:\n{}\n\n### Consequences\n{}\n\n### Supersedes\nNone\n",
+        id,
+        normalize_inline(&input.title),
+        input.status,
+        date,
+        input.agent,
+        input.related,
+        if input.context.trim().is_empty() { "TODO" } else { input.context.trim() },
+        if input.decision.trim().is_empty() { "TODO" } else { input.decision.trim() },
+        markdown_bullets(&input.options),
+        markdown_bullets(&input.pros),
+        markdown_bullets(&input.cons),
+        if input.consequences.trim().is_empty() { "TODO" } else { input.consequences.trim() }
+    )
+}
+
+fn read_decisions_file_at(path: &str) -> CflowResult<String> {
+    if !Path::new(path).exists() {
+        return Ok(String::new());
+    }
+    fs::read_to_string(path).map_err(|error| error.to_string())
+}
+
+fn read_decisions_file() -> CflowResult<String> {
+    read_decisions_file_at(DECISIONS_PATH)
+}
+
+fn append_decision_at_path(
+    path: &str,
+    input: &DecisionAddInput,
+    date: &str,
+) -> CflowResult<String> {
+    validate_decision_status(&input.status)?;
+    if input.title.trim().is_empty() {
+        return Err("Missing --title \"<title>\"".to_string());
+    }
+    if input.agent.trim().is_empty() {
+        return Err("Missing --agent \"<agent-name>\"".to_string());
+    }
+
+    let existing = read_decisions_file_at(path)?;
+    let id = next_decision_id(&existing);
+    let entry = render_decision_entry(&id, date, input);
+
+    let mut content = existing.trim_end().to_string();
+    if !content.is_empty() {
+        content.push_str("\n\n");
+    }
+    content.push_str(&entry);
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+
+    write_text(path, &content)?;
+    Ok(id)
+}
+
+fn update_decision_status_line(block: &str, status: &str) -> String {
+    let mut replaced = false;
+    let mut output = Vec::new();
+
+    for line in block.lines() {
+        if line.trim_start().starts_with("Status:") && !replaced {
+            output.push(format!("Status: {}", status));
+            replaced = true;
+        } else {
+            output.push(line.to_string());
+        }
+    }
+
+    if replaced {
+        output.join("\n")
+    } else {
+        let mut lines = block.lines();
+        let mut result = String::new();
+        if let Some(first) = lines.next() {
+            result.push_str(first);
+            result.push_str("\n\n");
+            result.push_str(&format!("Status: {}\n", status));
+            for line in lines {
+                result.push_str(line);
+                result.push('\n');
+            }
+            result.trim_end().to_string()
+        } else {
+            block.to_string()
+        }
+    }
+}
+
+fn upsert_superseded_by_line(block: &str, by_id: &str) -> String {
+    let mut replaced = false;
+    let mut inserted = false;
+    let mut output = Vec::new();
+
+    for line in block.lines() {
+        if line.trim_start().starts_with("Superseded By:") && !replaced {
+            output.push(format!("Superseded By: {}", by_id));
+            replaced = true;
+            inserted = true;
+            continue;
+        }
+
+        if !inserted && line.trim_start().starts_with("Related Problems:") {
+            output.push(line.to_string());
+            output.push(format!("Superseded By: {}", by_id));
+            inserted = true;
+            continue;
+        }
+
+        if !inserted && line.trim_start().starts_with("### ") {
+            output.push(format!("Superseded By: {}", by_id));
+            output.push(String::new());
+            inserted = true;
+        }
+
+        output.push(line.to_string());
+    }
+
+    if !inserted {
+        output.push(format!("Superseded By: {}", by_id));
+    }
+
+    output.join("\n")
+}
+
+fn rewrite_decision_entry<F>(content: &str, id: &str, updater: F) -> CflowResult<String>
+where
+    F: FnOnce(&str) -> CflowResult<String>,
+{
+    let starts = decision_entry_starts(content);
+    for (index, (start, entry_id)) in starts.iter().enumerate() {
+        if entry_id != id {
+            continue;
+        }
+        let end = starts
+            .get(index + 1)
+            .map(|(next_start, _)| *next_start)
+            .unwrap_or(content.len());
+        let mut updated = String::new();
+        updated.push_str(&content[..*start]);
+        updated.push_str(&updater(&content[*start..end])?);
+        updated.push('\n');
+        updated.push_str(content[end..].trim_start_matches('\n'));
+        return Ok(updated);
+    }
+
+    Err(format!("Decision not found: {}", id))
+}
+
+fn related_contains(related: &str, target: &str) -> bool {
+    related.split(',').map(str::trim).any(|item| item == target)
+}
+
+#[derive(Clone)]
 struct ProblemEntry {
     id: String,
     title: String,
@@ -1065,15 +1372,26 @@ fn validate_problem_input(data: &Value) -> CflowResult<()> {
         return Err("Problem id is generated by CLI; do not provide id.".to_string());
     }
     if data.get("detected_at").is_some() {
-        return Err("Problem detected_at is generated by CLI; do not provide detected_at.".to_string());
+        return Err(
+            "Problem detected_at is generated by CLI; do not provide detected_at.".to_string(),
+        );
     }
 
     require_field(get_path(data, &["title"]), "title")?;
     require_field(get_path(data, &["severity"]), "severity")?;
     require_field(get_path(data, &["area"]), "area")?;
-    require_field(get_path(data, &["detected_by", "agent"]), "detected_by.agent")?;
-    require_field(get_path(data, &["detected_by", "provider"]), "detected_by.provider")?;
-    require_field(get_path(data, &["detected_by", "command"]), "detected_by.command")?;
+    require_field(
+        get_path(data, &["detected_by", "agent"]),
+        "detected_by.agent",
+    )?;
+    require_field(
+        get_path(data, &["detected_by", "provider"]),
+        "detected_by.provider",
+    )?;
+    require_field(
+        get_path(data, &["detected_by", "command"]),
+        "detected_by.command",
+    )?;
     require_field(get_path(data, &["phase"]), "phase")?;
     require_field(get_path(data, &["problem"]), "problem")?;
     require_field(get_path(data, &["impact"]), "impact")?;
@@ -1084,7 +1402,11 @@ fn validate_problem_input(data: &Value) -> CflowResult<()> {
     if !status.is_empty() && status != "null" {
         validate_problem_status(&status)?;
     }
-    assert_allowed(get_path(data, &["severity"]), PROBLEM_SEVERITIES, "severity")?;
+    assert_allowed(
+        get_path(data, &["severity"]),
+        PROBLEM_SEVERITIES,
+        "severity",
+    )?;
     assert_allowed(get_path(data, &["phase"]), PROBLEM_PHASES, "phase")?;
 
     if let Some(links) = data.get("links") {
@@ -1181,8 +1503,14 @@ fn markdown_list_from_links(links: Option<&Value>) -> String {
 }
 
 fn render_detected_by(data: &Value) -> String {
-    let agent = normalize_inline(&option_to_js_string(get_path(data, &["detected_by", "agent"])));
-    let provider = normalize_inline(&option_to_js_string(get_path(data, &["detected_by", "provider"])));
+    let agent = normalize_inline(&option_to_js_string(get_path(
+        data,
+        &["detected_by", "agent"],
+    )));
+    let provider = normalize_inline(&option_to_js_string(get_path(
+        data,
+        &["detected_by", "provider"],
+    )));
     let command = option_to_js_string(get_path(data, &["detected_by", "command"]));
 
     let actor = if agent == provider || provider.is_empty() {
@@ -1270,7 +1598,9 @@ fn append_problem_lifecycle_note(block: &str, status: &str, note: &str, timestam
     };
 
     if (status == "resolved" || status == "cancelled")
-        && block.lines().any(|line| line.trim() == format!("### {section}"))
+        && block
+            .lines()
+            .any(|line| line.trim() == format!("### {section}"))
     {
         return block.to_string();
     }
@@ -1312,7 +1642,12 @@ fn rewrite_problem_entry(content: &str, id: &str, status: &str, note: &str) -> C
             .unwrap_or(content.len());
         let mut updated = String::new();
         updated.push_str(&content[..*start]);
-        updated.push_str(&update_problem_entry_content(&content[*start..end], status, note, &timestamp));
+        updated.push_str(&update_problem_entry_content(
+            &content[*start..end],
+            status,
+            note,
+            &timestamp,
+        ));
         updated.push_str("\n");
         updated.push_str(&content[end..].trim_start_matches('\n'));
         return Ok(updated);
@@ -1428,9 +1763,222 @@ fn command_problem_update_status(args: &[String], forced_status: Option<&str>) -
     Ok(())
 }
 
+fn decision_add_input_from_args(args: &[String]) -> CflowResult<DecisionAddInput> {
+    let status = get_arg(args, "--status", "proposed");
+    validate_decision_status(&status)?;
+
+    let related = {
+        let value = get_arg(args, "--related", "None");
+        if value.trim().is_empty() {
+            "None".to_string()
+        } else {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    };
+
+    Ok(DecisionAddInput {
+        title: get_arg(args, "--title", ""),
+        status,
+        agent: get_arg(args, "--agent", ""),
+        related,
+        context: get_arg(args, "--context", ""),
+        decision: get_arg(args, "--decision", ""),
+        options: get_arg(args, "--options", ""),
+        pros: get_arg(args, "--pros", ""),
+        cons: get_arg(args, "--cons", ""),
+        consequences: get_arg(args, "--consequences", ""),
+    })
+}
+
+fn command_decision_add(args: &[String]) -> CflowResult<()> {
+    let input = decision_add_input_from_args(args)?;
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let id = append_decision_at_path(DECISIONS_PATH, &input, &date)?;
+    println!("Decision added: {}", id);
+    println!("Path: {}", DECISIONS_PATH);
+    Ok(())
+}
+
+fn command_decision_list(args: &[String]) -> CflowResult<()> {
+    let status_filter = get_arg(args, "--status", "");
+    if !status_filter.is_empty() {
+        validate_decision_status(&status_filter)?;
+    }
+    let agent_filter = get_arg(args, "--agent", "");
+    let related_filter = get_arg(args, "--related", "");
+
+    let content = read_decisions_file()?;
+    let mut printed = false;
+    for entry in parse_decision_entries(&content) {
+        if !status_filter.is_empty() && entry.status != status_filter {
+            continue;
+        }
+        if !agent_filter.is_empty() && entry.agent != agent_filter {
+            continue;
+        }
+        if !related_filter.is_empty() && !related_contains(&entry.related_problems, &related_filter)
+        {
+            continue;
+        }
+
+        println!(
+            "{:<7}  {:<10}  {:<7}  {}",
+            entry.id, entry.status, entry.agent, entry.title
+        );
+        printed = true;
+    }
+
+    if !printed {
+        println!("No decisions found.");
+    }
+    Ok(())
+}
+
+fn command_decision_show(args: &[String]) -> CflowResult<()> {
+    let id = args.first().cloned().unwrap_or_default();
+    if id.is_empty() {
+        return Err("Usage: cflow decision show <id>".to_string());
+    }
+
+    let content = read_decisions_file()?;
+    let Some(entry) = parse_decision_entries(&content)
+        .into_iter()
+        .find(|entry| entry.id == id)
+    else {
+        return Err(format!("Decision not found: {}", id));
+    };
+
+    println!("{}", entry.content);
+    Ok(())
+}
+
+fn change_decision_status_at_path(
+    path: &str,
+    id: &str,
+    target_status: &str,
+) -> CflowResult<String> {
+    validate_decision_status(target_status)?;
+    let content = read_decisions_file_at(path)?;
+    let Some(entry) = parse_decision_entries(&content)
+        .into_iter()
+        .find(|entry| entry.id == id)
+    else {
+        return Err(format!("Decision not found: {}", id));
+    };
+
+    let allowed = match target_status {
+        "accepted" => entry.status == "proposed",
+        "rejected" => entry.status == "proposed",
+        _ => false,
+    };
+
+    if entry.status == target_status {
+        return Ok(format!("Decision already {}: {}", target_status, id));
+    }
+
+    if !allowed {
+        return Err(format!(
+            "Invalid decision status transition: {} -> {}",
+            entry.status, target_status
+        ));
+    }
+
+    let updated = rewrite_decision_entry(&content, id, |block| {
+        Ok(update_decision_status_line(block, target_status))
+    })?;
+    write_text(path, &updated)?;
+    Ok(format!("Decision updated: {}", id))
+}
+
+fn command_decision_accept(args: &[String]) -> CflowResult<()> {
+    let id = args.first().cloned().unwrap_or_default();
+    if id.is_empty() {
+        return Err("Usage: cflow decision accept <id>".to_string());
+    }
+    let message = change_decision_status_at_path(DECISIONS_PATH, &id, "accepted")?;
+    println!("{}", message);
+    println!("Status: accepted");
+    Ok(())
+}
+
+fn command_decision_reject(args: &[String]) -> CflowResult<()> {
+    let id = args.first().cloned().unwrap_or_default();
+    if id.is_empty() {
+        return Err("Usage: cflow decision reject <id>".to_string());
+    }
+    let message = change_decision_status_at_path(DECISIONS_PATH, &id, "rejected")?;
+    println!("{}", message);
+    println!("Status: rejected");
+    Ok(())
+}
+
+fn supersede_decision_at_path(path: &str, id: &str, by_id: &str) -> CflowResult<String> {
+    if by_id.trim().is_empty() {
+        return Err("Missing --by <decision-id>".to_string());
+    }
+
+    let content = read_decisions_file_at(path)?;
+    let entries = parse_decision_entries(&content);
+    let Some(entry) = entries.iter().find(|entry| entry.id == id) else {
+        return Err(format!("Decision not found: {}", id));
+    };
+    if !entries.iter().any(|entry| entry.id == by_id) {
+        return Err(format!("Decision not found: {}", by_id));
+    }
+    if entry.status != "accepted" {
+        return Err(format!(
+            "Invalid decision status transition: {} -> superseded",
+            entry.status
+        ));
+    }
+
+    let updated = rewrite_decision_entry(&content, id, |block| {
+        let updated_status = update_decision_status_line(block, "superseded");
+        Ok(upsert_superseded_by_line(&updated_status, by_id))
+    })?;
+    write_text(path, &updated)?;
+    Ok(format!("Decision superseded: {}", id))
+}
+
+fn command_decision_supersede(args: &[String]) -> CflowResult<()> {
+    let id = args.first().cloned().unwrap_or_default();
+    if id.is_empty() {
+        return Err("Usage: cflow decision supersede <id> --by <decision-id>".to_string());
+    }
+    let by_id = get_arg(args, "--by", "");
+    let message = supersede_decision_at_path(DECISIONS_PATH, &id, &by_id)?;
+    println!("{}", message);
+    println!("Superseded By: {}", by_id);
+    Ok(())
+}
+
+fn command_decision(args: &[String]) -> CflowResult<()> {
+    if args.is_empty() {
+        return Err("Usage: cflow decision add|list|show|accept|reject|supersede".to_string());
+    }
+
+    match args[0].as_str() {
+        "add" => command_decision_add(&args[1..]),
+        "list" => command_decision_list(&args[1..]),
+        "show" => command_decision_show(&args[1..]),
+        "accept" => command_decision_accept(&args[1..]),
+        "reject" => command_decision_reject(&args[1..]),
+        "supersede" => command_decision_supersede(&args[1..]),
+        _ => Err(format!("Unknown decision command: {}", args[0])),
+    }
+}
+
 fn command_problem(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
-        return Err("Usage: cflow problem add|list|open|resolved|cancelled|show|resolve|cancel|update".to_string());
+        return Err(
+            "Usage: cflow problem add|list|open|resolved|cancelled|show|resolve|cancel|update"
+                .to_string(),
+        );
     }
 
     match args[0].as_str() {
@@ -2078,7 +2626,7 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
     let command_cfg = resolve_agent_command(&provider, AgentPhase::Plan, config.as_ref())?;
     let verbose = has_flag(args, "--verbose");
     let task_path = resolve_task(args)?;
-    
+
     let is_story = task_path.contains("/stories/");
     let packet_path = if is_story {
         Path::new(&task_path)
@@ -2104,13 +2652,13 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
     }
 
     let request_md = fs::read_to_string(&request_path).map_err(|e| e.to_string())?;
-    
+
     let mut context_info = String::new();
     if is_story {
         let req_p = format!("{}/REQUEST.md", packet_path);
         let intake_p = format!("{}/INTAKE.md", packet_path);
         let packet_p = format!("{}/PACKET.md", packet_path);
-        
+
         if let Ok(c) = fs::read_to_string(req_p) {
             context_info.push_str(&format!("\n# Global REQUEST.md\n\n{}\n", c));
         }
@@ -2368,19 +2916,31 @@ fn command_agent(args: &[String]) -> CflowResult<()> {
     }
 }
 
-
 const INTAKE_INPUT_TYPES: &[&str] = &[
-    "new_spec", "spec_slice", "change_request", "new_feature", "bug_fix",
-    "refactor", "maintenance", "workflow_improvement", "documentation",
-    "test_only", "question", "unclear"
+    "new_spec",
+    "spec_slice",
+    "change_request",
+    "new_feature",
+    "bug_fix",
+    "refactor",
+    "maintenance",
+    "workflow_improvement",
+    "documentation",
+    "test_only",
+    "question",
+    "unclear",
 ];
 
-const INTAKE_LANES: &[&str] = &[
-    "tiny", "normal", "high_risk", "needs_clarification", "none"
-];
+const INTAKE_LANES: &[&str] = &["tiny", "normal", "high_risk", "needs_clarification", "none"];
 
 const INTAKE_NEXT_ACTIONS: &[&str] = &[
-    "answer_directly", "clarify", "task_flow", "packet_brief", "packet_split", "story_flow", "none"
+    "answer_directly",
+    "clarify",
+    "task_flow",
+    "packet_brief",
+    "packet_split",
+    "story_flow",
+    "none",
 ];
 
 fn resolve_packet(args: &[String]) -> CflowResult<String> {
@@ -2404,22 +2964,26 @@ fn resolve_story_path(args: &[String]) -> CflowResult<(String, String)> {
         Some(id) => id.to_string(),
         None => return Err("No current packet. Run `cflow packet new` first.".to_string()),
     };
-    
+
     let story = get_arg(args, "--story", "current");
     let story_id = if story == "current" {
         match state["current_story_id"].as_str() {
             Some(id) => id.to_string(),
-            None => return Err("No current story. Use `cflow story switch <story-id>` first.".to_string()),
+            None => {
+                return Err(
+                    "No current story. Use `cflow story switch <story-id>` first.".to_string(),
+                )
+            }
         }
     } else {
         story
     };
-    
+
     let stories_dir = format!(".coding/packets/{}/stories", packet_id);
     if !Path::new(&stories_dir).exists() {
         return Err(format!("Stories directory does not exist: {}", stories_dir));
     }
-    
+
     let entries = fs::read_dir(&stories_dir).map_err(|e| e.to_string())?;
     for entry in entries {
         if let Ok(entry) = entry {
@@ -2433,7 +2997,7 @@ fn resolve_story_path(args: &[String]) -> CflowResult<(String, String)> {
             }
         }
     }
-    
+
     Ok((packet_id, story_id))
 }
 
@@ -2443,28 +3007,40 @@ fn validate_intake(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["lane"]), "lane")?;
     require_field(get_path(data, &["next_action"]), "next_action")?;
 
-    assert_allowed(get_path(data, &["input_type"]), INTAKE_INPUT_TYPES, "input_type")?;
+    assert_allowed(
+        get_path(data, &["input_type"]),
+        INTAKE_INPUT_TYPES,
+        "input_type",
+    )?;
     assert_allowed(get_path(data, &["lane"]), INTAKE_LANES, "lane")?;
-    assert_allowed(get_path(data, &["next_action"]), INTAKE_NEXT_ACTIONS, "next_action")?;
+    assert_allowed(
+        get_path(data, &["next_action"]),
+        INTAKE_NEXT_ACTIONS,
+        "next_action",
+    )?;
 
     let lane = option_to_js_string(get_path(data, &["lane"]));
     if lane == "needs_clarification" && is_empty(get_path(data, &["clarifying_questions"])) {
-        return Err("Invalid intake: lane=needs_clarification requires clarifying_questions".to_string());
+        return Err(
+            "Invalid intake: lane=needs_clarification requires clarifying_questions".to_string(),
+        );
     }
 
     Ok(())
 }
 
 fn classify_intake(data: &mut Value) {
-    let risk_flags = data.get("risk_flags")
+    let risk_flags = data
+        .get("risk_flags")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let hard_gates = data.get("hard_gates")
+    let hard_gates = data
+        .get("hard_gates")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-        
+
     let mut lane = option_to_js_string(data.get("lane"));
     if lane == "none" || lane.is_empty() || lane == "null" {
         if !hard_gates.is_empty() {
@@ -2481,7 +3057,7 @@ fn classify_intake(data: &mut Value) {
         }
         data["lane"] = Value::String(lane.clone());
     }
-    
+
     if data.get("split_required").is_none() {
         let split = if lane == "high_risk" {
             true
@@ -2495,10 +3071,7 @@ fn classify_intake(data: &mut Value) {
 }
 
 fn render_intake(data: &Value) -> String {
-    let split_required = if matches!(
-        get_path(data, &["split_required"]),
-        Some(Value::Bool(true))
-    ) {
+    let split_required = if matches!(get_path(data, &["split_required"]), Some(Value::Bool(true))) {
         "true"
     } else {
         "false"
@@ -2524,7 +3097,10 @@ fn validate_packet_brief(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["scope"]), "scope")?;
     require_field(get_path(data, &["scope", "in"]), "scope.in")?;
     require_field(get_path(data, &["scope", "out"]), "scope.out")?;
-    require_field(get_path(data, &["global_acceptance_criteria"]), "global_acceptance_criteria")?;
+    require_field(
+        get_path(data, &["global_acceptance_criteria"]),
+        "global_acceptance_criteria",
+    )?;
     Ok(())
 }
 
@@ -2549,8 +3125,14 @@ fn validate_split(data: &Value) -> CflowResult<()> {
     for (idx, story) in stories.iter().enumerate() {
         require_field(story.get("id"), &format!("stories[{}].id", idx))?;
         require_field(story.get("title"), &format!("stories[{}].title", idx))?;
-        require_field(story.get("description"), &format!("stories[{}].description", idx))?;
-        require_field(story.get("acceptance_criteria"), &format!("stories[{}].acceptance_criteria", idx))?;
+        require_field(
+            story.get("description"),
+            &format!("stories[{}].description", idx),
+        )?;
+        require_field(
+            story.get("acceptance_criteria"),
+            &format!("stories[{}].acceptance_criteria", idx),
+        )?;
     }
     Ok(())
 }
@@ -2632,20 +3214,26 @@ fn command_packet_new(args: &[String]) -> CflowResult<()> {
     state["current_packet_id"] = Value::String(packet_id.clone());
     state["current_story_id"] = Value::Null;
     state["current_task_id"] = Value::Null;
-    
+
     let mut packet_meta = serde_json::Map::new();
     packet_meta.insert("title".to_string(), Value::String(title.clone()));
-    packet_meta.insert("status".to_string(), Value::String("in_progress".to_string()));
+    packet_meta.insert(
+        "status".to_string(),
+        Value::String("in_progress".to_string()),
+    );
     packet_meta.insert("phase".to_string(), Value::String("new".to_string()));
     packet_meta.insert("lane".to_string(), Value::String("none".to_string()));
     packet_meta.insert("split_required".to_string(), Value::Bool(false));
     packet_meta.insert("risk_flags".to_string(), Value::Array(Vec::new()));
     packet_meta.insert("hard_gates".to_string(), Value::Array(Vec::new()));
-    packet_meta.insert("next_action".to_string(), Value::String("intake".to_string()));
+    packet_meta.insert(
+        "next_action".to_string(),
+        Value::String("intake".to_string()),
+    );
     let now_str = now.to_rfc3339();
     packet_meta.insert("created_at".to_string(), Value::String(now_str.clone()));
     packet_meta.insert("updated_at".to_string(), Value::String(now_str));
-    
+
     let mut artifacts = serde_json::Map::new();
     artifacts.insert("request".to_string(), Value::Bool(false));
     artifacts.insert("intake".to_string(), Value::Bool(false));
@@ -2654,7 +3242,7 @@ fn command_packet_new(args: &[String]) -> CflowResult<()> {
     artifacts.insert("packet_verify".to_string(), Value::Bool(false));
     artifacts.insert("packet_ship".to_string(), Value::Bool(false));
     packet_meta.insert("artifacts".to_string(), Value::Object(artifacts));
-    
+
     packet_meta.insert("stories".to_string(), Value::Object(serde_json::Map::new()));
 
     state["packets"][&packet_id] = Value::Object(packet_meta);
@@ -2682,7 +3270,7 @@ fn command_packet_intake(args: &[String]) -> CflowResult<()> {
 
     let packet_id = extract_task_id(&packet_path);
     let mut state = load_state();
-    
+
     if let Some(packet_meta) = state["packets"].get_mut(&packet_id) {
         packet_meta["lane"] = data["lane"].clone();
         packet_meta["risk_flags"] = data["risk_flags"].clone();
@@ -2695,7 +3283,7 @@ fn command_packet_intake(args: &[String]) -> CflowResult<()> {
         let has_req = Path::new(&format!("{}/REQUEST.md", packet_path)).exists();
         packet_meta["artifacts"]["request"] = Value::Bool(has_req);
     }
-    
+
     save_state(&state)?;
     Ok(())
 }
@@ -2727,29 +3315,29 @@ fn command_packet_split(args: &[String]) -> CflowResult<()> {
     if !Path::new(&packet_path).exists() {
         return Err(format!("Packet folder does not exist: {}", packet_path));
     }
-    
+
     let data = read_json_input(args)?;
     validate_split(&data)?;
-    
+
     let packet_id = extract_task_id(&packet_path);
     let mut state = load_state();
-    
+
     let stories = data["stories"].as_array().unwrap();
-    
+
     let index_output = format!("{}/STORIES.md", packet_path);
     write_text(&index_output, &render_stories_index(&data["stories"]))?;
-    
+
     let mut state_stories = serde_json::Map::new();
     for story in stories {
         let id = option_to_js_string(story.get("id"));
         let title = option_to_js_string(story.get("title"));
-        
+
         let story_dir = format!("{}/stories/{}", packet_path, id);
         let story_file = format!("{}/STORY.md", story_dir);
-        
+
         ensure_dir(&format!("{}/.placeholder", story_dir))?;
         write_text(&story_file, &render_story_md(story))?;
-        
+
         let mut story_meta = serde_json::Map::new();
         story_meta.insert("title".to_string(), Value::String(title));
         story_meta.insert("status".to_string(), Value::String("todo".to_string()));
@@ -2757,14 +3345,14 @@ fn command_packet_split(args: &[String]) -> CflowResult<()> {
         story_meta.insert("findings_count".to_string(), Value::Number(0.into()));
         state_stories.insert(id, Value::Object(story_meta));
     }
-    
+
     if let Some(packet_meta) = state["packets"].get_mut(&packet_id) {
         packet_meta["artifacts"]["stories"] = Value::Bool(true);
         packet_meta["phase"] = Value::String("split_done".to_string());
         packet_meta["stories"] = Value::Object(state_stories);
         packet_meta["updated_at"] = Value::String(chrono::Local::now().to_rfc3339());
     }
-    
+
     save_state(&state)?;
     println!("created {}/STORIES.md and story subfolders", packet_path);
     Ok(())
@@ -2780,7 +3368,7 @@ fn command_packet_status() {
         println!("Warning: Packet metadata not found in state.json.");
         return;
     };
-    
+
     println!("Packet: {}", packet_id);
     println!("Title: {}", option_to_js_string(packet.get("title")));
     println!("Lane: {}", option_to_js_string(packet.get("lane")));
@@ -2838,7 +3426,7 @@ fn command_packet_ship(args: &[String]) -> CflowResult<()> {
     if !Path::new(&packet_path).exists() {
         return Err(format!("Packet folder does not exist: {}", packet_path));
     }
-    
+
     let verify_path = format!("{}/PACKET_VERIFY.md", packet_path);
     if !Path::new(&verify_path).exists() {
         return Err("Ship rejected: PACKET_VERIFY.md is missing".to_string());
@@ -2847,7 +3435,9 @@ fn command_packet_ship(args: &[String]) -> CflowResult<()> {
     let verify_status = first_non_empty_section_line(&verify_content, "Status")
         .ok_or_else(|| "Ship rejected: PACKET_VERIFY.md status is missing".to_string())?;
     if verify_status != "passed" {
-        return Err(format!("Ship rejected: PACKET_VERIFY.md status must be passed (found {verify_status})"));
+        return Err(format!(
+            "Ship rejected: PACKET_VERIFY.md status must be passed (found {verify_status})"
+        ));
     }
 
     let data = read_json_input(args)?;
@@ -2859,16 +3449,16 @@ fn command_packet_ship(args: &[String]) -> CflowResult<()> {
 
     let packet_id = extract_task_id(&packet_path);
     let mut state = load_state();
-    
+
     if let Some(packet_meta) = state["packets"].get_mut(&packet_id) {
         packet_meta["artifacts"]["packet_ship"] = Value::Bool(true);
         packet_meta["phase"] = Value::String("committed".to_string());
         packet_meta["status"] = Value::String("done".to_string());
         packet_meta["updated_at"] = Value::String(chrono::Local::now().to_rfc3339());
     }
-    
+
     save_state(&state)?;
-    
+
     let commit_mode = has_flag(args, "--commit");
     if commit_mode {
         let commit_message = option_to_js_string(get_path(&data, &["commit_message"]));
@@ -2918,7 +3508,7 @@ fn command_story_list() -> CflowResult<()> {
         println!("Warning: Packet metadata not found in state.json.");
         return Ok(());
     };
-    
+
     println!("Stories for packet {}:", packet_id);
     if let Some(stories) = packet.get("stories").and_then(|s| s.as_object()) {
         if stories.is_empty() {
@@ -2949,17 +3539,21 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
     if target.is_empty() {
         return Err("Usage: cflow story switch <story-id>".to_string());
     }
-    
+
     let mut state = load_state();
     let packet_id = match state["current_packet_id"].as_str() {
         Some(id) => id.to_string(),
         None => return Err("No current packet selected.".to_string()),
     };
-    
+
     let matched_id = {
-        let packet = state["packets"].get(&packet_id).ok_or("Current packet not found in state.")?;
-        let stories = packet["stories"].as_object().ok_or("No stories in current packet.")?;
-        
+        let packet = state["packets"]
+            .get(&packet_id)
+            .ok_or("Current packet not found in state.")?;
+        let stories = packet["stories"]
+            .as_object()
+            .ok_or("No stories in current packet.")?;
+
         let mut found = None;
         for id in stories.keys() {
             if id == &target || id.starts_with(&format!("{}-", target)) {
@@ -2969,17 +3563,16 @@ fn command_story_switch(args: &[String]) -> CflowResult<()> {
         }
         found.ok_or_else(|| format!("Story '{}' not found.", target))?
     };
-    
+
     state["current_story_id"] = Value::String(matched_id.clone());
     save_state(&state)?;
-    
+
     let story_dir = format!("packets/{}/stories/{}", packet_id, matched_id);
     write_text(".coding/current", &story_dir)?;
-    
+
     println!("Switched to story: {}", matched_id);
     Ok(())
 }
-
 
 fn command_story_status() -> CflowResult<()> {
     let state = load_state();
@@ -2991,16 +3584,19 @@ fn command_story_status() -> CflowResult<()> {
         println!("No current story selected.");
         return Ok(());
     };
-    
+
     let packet = &state["packets"][packet_id];
     let story = &packet["stories"][story_id];
-    
+
     println!("Current story: {}", story_id);
     println!("Title: {}", option_to_js_string(story.get("title")));
     println!("Status: {}", option_to_js_string(story.get("status")));
     println!("Phase: {}", option_to_js_string(story.get("phase")));
-    println!("Findings: {}", option_to_js_string(story.get("findings_count")));
-    
+    println!(
+        "Findings: {}",
+        option_to_js_string(story.get("findings_count"))
+    );
+
     Ok(())
 }
 
@@ -3034,7 +3630,9 @@ fn command_story_ship(args: &[String]) -> CflowResult<()> {
 
 fn command_story(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
-        return Err("Usage: cflow story list|switch|status|plan|coding|verify|ship|agent".to_string());
+        return Err(
+            "Usage: cflow story list|switch|status|plan|coding|verify|ship|agent".to_string(),
+        );
     }
     match args[0].as_str() {
         "list" => command_story_list(),
@@ -3306,7 +3904,7 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
 
 fn command_status() {
     let state = load_state();
-    
+
     if let Some(packet_id) = state["current_packet_id"].as_str() {
         if !packet_id.is_empty() {
             if let Some(packet) = state["packets"].get(packet_id) {
@@ -3314,16 +3912,22 @@ fn command_status() {
                 println!("Title: {}", option_to_js_string(packet.get("title")));
                 println!("Lane: {}", option_to_js_string(packet.get("lane")));
                 println!("Phase: {}", option_to_js_string(packet.get("phase")));
-                let split_required = packet.get("split_required").and_then(|v| v.as_bool()).unwrap_or(false);
+                let split_required = packet
+                    .get("split_required")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 println!("Split required: {}", split_required);
-                
+
                 println!();
                 if let Some(story_id) = state["current_story_id"].as_str() {
                     if !story_id.is_empty() {
                         if let Some(story) = packet["stories"].get(story_id) {
                             println!("Current story: {}", story_id);
                             println!("Story phase: {}", option_to_js_string(story.get("phase")));
-                            println!("Findings: {}", option_to_js_string(story.get("findings_count")));
+                            println!(
+                                "Findings: {}",
+                                option_to_js_string(story.get("findings_count"))
+                            );
                         }
                     } else {
                         println!("No current story selected.");
@@ -3331,7 +3935,7 @@ fn command_status() {
                 } else {
                     println!("No current story selected.");
                 }
-                
+
                 let packet_path = format!(".coding/packets/{}", packet_id);
                 let next = determine_next_action(&packet_path);
                 println!();
@@ -3609,13 +4213,18 @@ struct NextAction {
 
 fn determine_next_action(task_path: &str) -> NextAction {
     let state = load_state();
-    
+
     if let Some(packet_id) = state["current_packet_id"].as_str() {
         if !packet_id.is_empty() {
             let p_path = format!(".coding/packets/{}", packet_id);
+            let packet_scoped =
+                task_path == p_path || task_path.starts_with(&format!("{}/", p_path));
+            if !packet_scoped {
+                return determine_task_next_action(task_path);
+            }
             let req = Path::new(&format!("{}/REQUEST.md", p_path)).exists();
             let intake = Path::new(&format!("{}/INTAKE.md", p_path)).exists();
-            
+
             if !req {
                 return NextAction {
                     command: "packet intake or request creation".to_string(),
@@ -3628,17 +4237,20 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     reason: "INTAKE.md is missing".to_string(),
                 };
             }
-            
+
             let packet_meta = &state["packets"][packet_id];
             let lane = option_to_js_string(packet_meta.get("lane"));
-            let split_required = packet_meta.get("split_required").and_then(|v| v.as_bool()).unwrap_or(false);
-            
+            let split_required = packet_meta
+                .get("split_required")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
             if lane == "tiny" {
                 let plan = Path::new(&format!("{}/PLAN.md", p_path)).exists();
                 let coding = Path::new(&format!("{}/CODING.md", p_path)).exists();
                 let verify = Path::new(&format!("{}/VERIFY.md", p_path)).exists();
                 let ship = Path::new(&format!("{}/SHIP.md", p_path)).exists();
-                
+
                 if !plan {
                     return NextAction {
                         command: "cflow agent plan --packet current".to_string(),
@@ -3682,11 +4294,11 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     reason: "SHIP.md exists".to_string(),
                 };
             }
-            
+
             if split_required {
                 let packet_brief = Path::new(&format!("{}/PACKET.md", p_path)).exists();
                 let stories_idx = Path::new(&format!("{}/STORIES.md", p_path)).exists();
-                
+
                 if !packet_brief {
                     return NextAction {
                         command: "cflow packet brief --packet current".to_string(),
@@ -3700,7 +4312,7 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     };
                 }
             }
-            
+
             let current_story_id = state["current_story_id"].as_str().unwrap_or("");
             if current_story_id.is_empty() {
                 return NextAction {
@@ -3708,12 +4320,12 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     reason: "current story is missing".to_string(),
                 };
             }
-            
+
             let story_path = format!("{}/stories/{}", p_path, current_story_id);
             let story_plan = Path::new(&format!("{}/PLAN.md", story_path)).exists();
             let story_coding = Path::new(&format!("{}/CODING.md", story_path)).exists();
             let story_verify = Path::new(&format!("{}/VERIFY.md", story_path)).exists();
-            
+
             if !story_plan {
                 return NextAction {
                     command: "cflow story agent plan --story current".to_string(),
@@ -3732,7 +4344,7 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     reason: "current story VERIFY.md is missing".to_string(),
                 };
             }
-            
+
             let story_verify_status = get_verify_status(&story_path).unwrap_or_default();
             if story_verify_status == "failed" || story_verify_status == "partial" {
                 return NextAction {
@@ -3747,7 +4359,7 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     reason: format!("story VERIFY.md has {} findings", story_findings),
                 };
             }
-            
+
             let mut all_stories_done = true;
             if let Some(stories_map) = packet_meta.get("stories").and_then(|s| s.as_object()) {
                 for (id, _) in stories_map {
@@ -3756,8 +4368,9 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     let s_verify_status = get_verify_status(&s_path).unwrap_or_default();
                     let s_findings = get_verify_findings_count(&s_path).unwrap_or(0);
                     let s_ship = Path::new(&format!("{}/SHIP.md", s_path)).exists();
-                    
-                    let is_done = s_ship || (s_verify && s_verify_status == "passed" && s_findings == 0);
+
+                    let is_done =
+                        s_ship || (s_verify && s_verify_status == "passed" && s_findings == 0);
                     if !is_done {
                         all_stories_done = false;
                         break;
@@ -3766,14 +4379,14 @@ fn determine_next_action(task_path: &str) -> NextAction {
             } else {
                 all_stories_done = false;
             }
-            
+
             if !all_stories_done {
                 return NextAction {
                     command: "cflow story list / cflow story switch <story-id>".to_string(),
                     reason: "current story is done but other stories are pending".to_string(),
                 };
             }
-            
+
             let packet_verify = Path::new(&format!("{}/PACKET_VERIFY.md", p_path)).exists();
             if !packet_verify {
                 return NextAction {
@@ -3781,10 +4394,12 @@ fn determine_next_action(task_path: &str) -> NextAction {
                     reason: "all stories verified/shipped".to_string(),
                 };
             }
-            
-            let p_verify_content = fs::read_to_string(&format!("{}/PACKET_VERIFY.md", p_path)).unwrap_or_default();
-            let p_status = first_non_empty_section_line(&p_verify_content, "Status").unwrap_or_default();
-            
+
+            let p_verify_content =
+                fs::read_to_string(&format!("{}/PACKET_VERIFY.md", p_path)).unwrap_or_default();
+            let p_status =
+                first_non_empty_section_line(&p_verify_content, "Status").unwrap_or_default();
+
             if p_status == "passed" {
                 let packet_ship = Path::new(&format!("{}/PACKET_SHIP.md", p_path)).exists();
                 if !packet_ship {
@@ -3806,6 +4421,10 @@ fn determine_next_action(task_path: &str) -> NextAction {
         }
     }
 
+    determine_task_next_action(task_path)
+}
+
+fn determine_task_next_action(task_path: &str) -> NextAction {
     let req = Path::new(&format!("{}/REQUEST.md", task_path)).exists();
     let plan = Path::new(&format!("{}/PLAN.md", task_path)).exists();
     let coding = Path::new(&format!("{}/CODING.md", task_path)).exists();
@@ -3956,6 +4575,7 @@ fn print_usage() {
   cflow verify  [--task current] [--input file]
   cflow ship    [--task current] [--input file] [--dry-run|--commit]
   cflow problem add|list|open|resolved|cancelled|show|resolve|cancel|update
+  cflow decision add|list|show|accept|reject|supersede
   cflow status
   cflow tasks
   cflow switch <task-id>
@@ -3985,6 +4605,7 @@ fn run() -> CflowResult<()> {
         Some("verify") => command_verify(&raw_args),
         Some("ship") => command_ship(&raw_args),
         Some("problem") => command_problem(&raw_args),
+        Some("decision") => command_decision(&raw_args),
         Some("packet") => command_packet(&raw_args),
         Some("story") => command_story(&raw_args),
         Some("status") => {
@@ -4034,6 +4655,21 @@ mod tests {
         ));
         fs::create_dir_all(&path).expect("test dir should be created");
         path.to_string_lossy().into_owned()
+    }
+
+    fn decision_input(title: &str, status: &str, agent: &str, related: &str) -> DecisionAddInput {
+        DecisionAddInput {
+            title: title.to_string(),
+            status: status.to_string(),
+            agent: agent.to_string(),
+            related: related.to_string(),
+            context: String::new(),
+            decision: String::new(),
+            options: String::new(),
+            pros: String::new(),
+            cons: String::new(),
+            consequences: String::new(),
+        }
     }
 
     #[test]
@@ -4226,12 +4862,241 @@ prompt_mode = "stdin"
                 .expect("command should exist");
 
             assert_eq!(command.cmd, "agy");
-            assert_eq!(command.args, vec!["--prompt"]);
+            assert_eq!(
+                command.args,
+                vec!["--dangerously-skip-permissions", "--prompt"]
+            );
             assert_eq!(command.prompt_mode, PromptMode::Arg);
             assert_eq!(
                 display_resolved_agent_command(&command),
-                "agy --prompt \"<PROMPT>\""
+                "agy --dangerously-skip-permissions --prompt \"<PROMPT>\""
             );
         }
+    }
+
+    #[test]
+    fn adds_first_decision_with_required_template_sections() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-add-first"));
+        let input = decision_input("Use markdown decision log", "accepted", "codex", "None");
+
+        let id =
+            append_decision_at_path(&path, &input, "2026-06-01").expect("decision should be added");
+        let content = fs::read_to_string(&path).expect("decisions file should exist");
+        let entries = parse_decision_entries(&content);
+
+        assert_eq!(id, "D-0001");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "D-0001");
+        assert_eq!(entries[0].status, "accepted");
+        assert_eq!(entries[0].agent, "codex");
+        assert!(content.contains("Related Problems: None"));
+        for section in [
+            "### Context",
+            "### Decision",
+            "### Options Considered",
+            "### Tradeoffs",
+            "Pros:",
+            "Cons:",
+            "### Consequences",
+            "### Supersedes",
+        ] {
+            assert!(content.contains(section), "missing {section}");
+        }
+    }
+
+    #[test]
+    fn adds_second_decision_without_overwriting_first() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-add-second"));
+        append_decision_at_path(
+            &path,
+            &decision_input("Use markdown decision log", "accepted", "codex", "None"),
+            "2026-06-01",
+        )
+        .unwrap();
+
+        let id = append_decision_at_path(
+            &path,
+            &decision_input("Add parser", "proposed", "gemini", "None"),
+            "2026-06-01",
+        )
+        .expect("second decision should be added");
+        let content = fs::read_to_string(&path).unwrap();
+        let entries = parse_decision_entries(&content);
+
+        assert_eq!(id, "D-0002");
+        assert_eq!(entries.len(), 2);
+        assert!(content.contains("## D-0001: Use markdown decision log"));
+        assert!(content.contains("## D-0002: Add parser"));
+    }
+
+    #[test]
+    fn parses_decisions_for_list_output_and_filters() {
+        let content = "\
+## D-0001: Use markdown decision log
+
+Status: accepted
+Date: 2026-06-01
+Agent: codex
+Related Problems: None
+
+### Context
+TODO
+
+## D-0002: Add parser
+
+Status: proposed
+Date: 2026-06-01
+Agent: gemini
+Related Problems: P-0003, P-0004
+
+### Context
+TODO
+";
+
+        let entries = parse_decision_entries(content);
+        let accepted = entries
+            .iter()
+            .filter(|entry| entry.status == "accepted")
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+        let gemini = entries
+            .iter()
+            .filter(|entry| entry.agent == "gemini")
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+        let related = entries
+            .iter()
+            .filter(|entry| related_contains(&entry.related_problems, "P-0003"))
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries[0].title, "Use markdown decision log");
+        assert_eq!(entries[1].title, "Add parser");
+        assert_eq!(accepted, vec!["D-0001"]);
+        assert_eq!(gemini, vec!["D-0002"]);
+        assert_eq!(related, vec!["D-0002"]);
+    }
+
+    #[test]
+    fn show_decision_uses_raw_markdown_entry() {
+        let content = "\
+## D-0001: Use markdown decision log
+
+Status: accepted
+Date: 2026-06-01
+Agent: codex
+Related Problems: None
+
+### Context
+TODO
+
+### Decision
+TODO
+
+### Tradeoffs
+Pros:
+- TODO
+
+Cons:
+- TODO
+";
+
+        let entry = parse_decision_entries(content)
+            .into_iter()
+            .find(|entry| entry.id == "D-0001")
+            .expect("decision should parse");
+
+        assert!(entry
+            .content
+            .contains("## D-0001: Use markdown decision log"));
+        assert!(entry.content.contains("### Context"));
+        assert!(entry.content.contains("### Decision"));
+        assert!(entry.content.contains("### Tradeoffs"));
+    }
+
+    #[test]
+    fn accepts_proposed_decision() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-accept"));
+        append_decision_at_path(
+            &path,
+            &decision_input("Add parser", "proposed", "gemini", "None"),
+            "2026-06-01",
+        )
+        .unwrap();
+
+        change_decision_status_at_path(&path, "D-0001", "accepted")
+            .expect("proposed decision should be accepted");
+        let content = fs::read_to_string(&path).unwrap();
+
+        assert!(content.contains("Status: accepted"));
+    }
+
+    #[test]
+    fn rejects_proposed_decision() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-reject"));
+        append_decision_at_path(
+            &path,
+            &decision_input("Add parser", "proposed", "gemini", "None"),
+            "2026-06-01",
+        )
+        .unwrap();
+
+        change_decision_status_at_path(&path, "D-0001", "rejected")
+            .expect("proposed decision should be rejected");
+        let content = fs::read_to_string(&path).unwrap();
+
+        assert!(content.contains("Status: rejected"));
+    }
+
+    #[test]
+    fn supersedes_accepted_decision_by_existing_decision() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-supersede"));
+        append_decision_at_path(
+            &path,
+            &decision_input("Use markdown decision log", "accepted", "codex", "None"),
+            "2026-06-01",
+        )
+        .unwrap();
+        append_decision_at_path(
+            &path,
+            &decision_input("Use improved parser", "accepted", "codex", "None"),
+            "2026-06-02",
+        )
+        .unwrap();
+
+        supersede_decision_at_path(&path, "D-0001", "D-0002")
+            .expect("accepted decision should be superseded");
+        let content = fs::read_to_string(&path).unwrap();
+        let first = parse_decision_entries(&content)
+            .into_iter()
+            .find(|entry| entry.id == "D-0001")
+            .unwrap();
+
+        assert_eq!(first.status, "superseded");
+        assert!(first.content.contains("Superseded By: D-0002"));
+        assert!(first
+            .content
+            .contains("Related Problems: None\nSuperseded By: D-0002\n"));
+    }
+
+    #[test]
+    fn missing_decisions_file_reads_as_empty() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-missing-file"));
+
+        let content = read_decisions_file_at(&path).expect("missing file should not crash");
+
+        assert!(content.is_empty());
+        assert!(parse_decision_entries(&content).is_empty());
+    }
+
+    #[test]
+    fn invalid_decision_status_reports_allowed_values() {
+        let path = format!("{}/decisions.md", test_task_dir("decision-invalid-status"));
+        let input = decision_input("Bad status", "cancelled", "codex", "None");
+
+        let error = append_decision_at_path(&path, &input, "2026-06-01")
+            .expect_err("invalid status should fail");
+
+        assert!(error.contains("proposed, accepted, rejected, superseded"));
     }
 }

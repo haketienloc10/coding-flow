@@ -178,6 +178,60 @@ Cancel:
 bin/cflow problem cancel P002 --note "No longer relevant."
 ```
 
+## Decisions
+
+`cflow` can store durable decisions that explain why an agent chose one approach over another.
+
+Decisions are stored in:
+
+```text
+.coding/knowledge/decisions.md
+```
+
+Tradeoffs are part of each decision entry. Do not create `tradeoffs.md` or a separate `cflow tradeoff` workflow.
+
+Add a decision:
+
+```bash
+bin/cflow decision add --title "Use markdown decision log" --status accepted --agent codex
+```
+
+Optional body flags can prefill the entry:
+
+```bash
+bin/cflow decision add \
+  --title "Fallback to markdown parser" \
+  --status accepted \
+  --agent codex \
+  --related P-0003,P-0004 \
+  --context "Parser fallback was needed for markdown source of truth." \
+  --decision "Use a minimal markdown parser." \
+  --options "JSON source of truth,Markdown parser,Manual final report" \
+  --pros "Readable by humans,Easy to diff" \
+  --cons "Less queryable than JSON" \
+  --consequences "CLI owns lifecycle updates."
+```
+
+List and filter:
+
+```bash
+bin/cflow decision list
+bin/cflow decision list --status accepted
+bin/cflow decision list --agent codex
+bin/cflow decision list --related P-0003
+```
+
+Show and update lifecycle:
+
+```bash
+bin/cflow decision show D-0001
+bin/cflow decision accept D-0002
+bin/cflow decision reject D-0003
+bin/cflow decision supersede D-0001 --by D-0005
+```
+
+Agents should record a decision when choosing between multiple implementation approaches, using an important fallback, changing workflow direction, accepting a technical tradeoff, rejecting a reasonable option, making a choice that affects later tasks, or changing direction because of a problem. Skip tiny renames, formatting, typo fixes, behavior-neutral refactors, and obvious choices without meaningful tradeoff.
+
 ## Cài đặt nhanh
 
 Từ folder `coding-flow-v0`:

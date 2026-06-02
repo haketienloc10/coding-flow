@@ -1,8 +1,8 @@
 {
   "version": 2,
   "current_task_id": null,
-  "current_packet_id": "20260602-124336-problem-registry",
-  "current_story_id": "S01-problem-commands",
+  "current_packet_id": "20260602-132403-add-decision-tradeoff-workflow",
+  "current_story_id": "S01-decision-workflow",
   "tasks": {
     "20260602-113855-time-capsule-notes": {
       "title": "20260602-113855-time-capsule-notes",
@@ -119,6 +119,38 @@
       "stories": {
         "S01-problem-commands": {
           "title": "Problem registry CLI and docs",
+          "status": "done",
+          "phase": "commit_pending",
+          "findings_count": 0
+        }
+      }
+    },
+    "20260602-132403-add-decision-tradeoff-workflow": {
+      "title": "Add decision tradeoff workflow",
+      "status": "done",
+      "phase": "committed",
+      "lane": "normal",
+      "split_required": true,
+      "risk_flags": [
+        "CLI behavior change",
+        "markdown parser/update logic",
+        "documentation update"
+      ],
+      "hard_gates": [],
+      "next_action": "packet_brief",
+      "created_at": "2026-06-02T13:24:03.813763364+07:00",
+      "updated_at": "2026-06-02T14:50:05.762379769+07:00",
+      "artifacts": {
+        "request": false,
+        "intake": true,
+        "packet": true,
+        "stories": true,
+        "packet_verify": true,
+        "packet_ship": true
+      },
+      "stories": {
+        "S01-decision-workflow": {
+          "title": "Add decision log workflow",
           "status": "done",
           "phase": "commit_pending",
           "findings_count": 0

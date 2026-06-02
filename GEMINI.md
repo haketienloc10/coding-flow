@@ -51,6 +51,34 @@ cflow problem resolve P001 --note "..."
 cflow problem cancel P001 --note "..."
 ```
 
+## Decision Log
+
+Record non-trivial workflow, architecture, implementation, or fallback decisions in:
+
+```text
+.coding/knowledge/decisions.md
+```
+
+Use:
+
+```bash
+cflow decision add --title "<title>" --status proposed --agent "<agent-name>"
+```
+
+Record a decision when the agent:
+
+* chooses between multiple implementation approaches
+* uses an important fallback
+* changes workflow direction
+* accepts a technical tradeoff
+* rejects a reasonable option
+* makes a choice that affects later tasks
+* changes direction because of a problem
+
+Do not record decisions for small renames, formatting, typo fixes, behavior-neutral refactors, or obvious choices without meaningful tradeoff.
+
+A decision must capture context, decision, options considered, tradeoffs, consequences, and related problems if any. Tradeoffs belong inside the decision entry. Do not create a separate tradeoff log.
+
 ## Core Flow
 
 ```text
