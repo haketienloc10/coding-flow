@@ -21,8 +21,8 @@ cat <<'JSON' | bin/cflow request --task current
 }
 JSON
 
-bin/cflow agent plan --task current
-bin/cflow agent coding --task current
+bin/cflow agent plan --task current --provider codex
+bin/cflow agent coding --task current --provider codex
 
 cat <<'JSON' | bin/cflow verify --task current
 {
@@ -75,6 +75,58 @@ cat ship.json | bin/cflow ship --task current --dry-run
 - Markdown trong `.coding/tasks/<task-id>/` là artifact chính.
 - Mỗi task có folder riêng nên không ghi đè task cũ.
 - Agent oneshot giúp main context không phải giữ toàn bộ plan/coding detail.
+- Agent stdout phải là JSON transient; `cflow` validate rồi render markdown.
+- Không lưu JSON output vào `.coding/`.
+
+## Agent providers
+
+`cflow agent plan` và `cflow agent coding` hỗ trợ chọn provider:
+
+```bash
+bin/cflow agent plan --task current --provider codex
+bin/cflow agent coding --task current --provider codex
+
+bin/cflow agent plan --task current --provider claude
+bin/cflow agent coding --task current --provider claude
+
+bin/cflow agent plan --task current --provider gemini
+bin/cflow agent coding --task current --provider gemini
+
+bin/cflow agent plan --task current --provider custom
+bin/cflow agent coding --task current --provider custom
+```
+
+Provider resolution order:
+
+1. `--provider`
+2. `CFLOW_AGENT_PROVIDER`
+3. `.coding/agent.toml` `default_provider`
+4. fallback `codex`
+
+Inspect local availability:
+
+```bash
+bin/cflow agent providers
+bin/cflow agent doctor --provider codex
+```
+
+Optional `.coding/agent.toml`:
+
+```toml
+default_provider = "codex"
+
+[providers.custom.plan]
+cmd = "my-agent"
+args = ["plan", "--json"]
+prompt_mode = "stdin"
+
+[providers.custom.coding]
+cmd = "my-agent"
+args = ["coding", "--json"]
+prompt_mode = "arg"
+```
+
+`prompt_mode = "arg"` passes the prompt as the final argument. `prompt_mode = "stdin"` writes the prompt to child stdin. Antigravity is intentionally config/custom-only until official CLI syntax is confirmed.
 
 ## Cài đặt nhanh
 

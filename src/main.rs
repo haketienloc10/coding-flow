@@ -178,19 +178,26 @@ fn extract_task_id(task_path: &str) -> String {
     filename.to_string()
 }
 
-fn update_task_state(task_id: &str, phase_override: Option<&str>, title_override: Option<&str>) -> CflowResult<()> {
+fn update_task_state(
+    task_id: &str,
+    phase_override: Option<&str>,
+    title_override: Option<&str>,
+) -> CflowResult<()> {
     let mut state = load_state();
-    
+
     if !state["tasks"].is_object() {
         state["tasks"] = Value::Object(serde_json::Map::new());
     }
-    
+
     let task_path = format!(".coding/tasks/{}", task_id);
     let is_new = state["tasks"].get(task_id).is_none();
-    
+
     let mut task_meta = if is_new {
         let mut map = serde_json::Map::new();
-        map.insert("title".to_string(), Value::String(title_override.unwrap_or(task_id).to_string()));
+        map.insert(
+            "title".to_string(),
+            Value::String(title_override.unwrap_or(task_id).to_string()),
+        );
         map.insert("status".to_string(), Value::String("todo".to_string()));
         map.insert("phase".to_string(), Value::String("new".to_string()));
         map.insert("next_action".to_string(), Value::String("plan".to_string()));
@@ -200,7 +207,7 @@ fn update_task_state(task_id: &str, phase_override: Option<&str>, title_override
         map.insert("type".to_string(), Value::String(String::new()));
         map.insert("lane".to_string(), Value::String(String::new()));
         map.insert("summary".to_string(), Value::String(String::new()));
-        
+
         let mut art_pres = serde_json::Map::new();
         art_pres.insert("REQUEST.md".to_string(), Value::Bool(false));
         art_pres.insert("PLAN.md".to_string(), Value::Bool(false));
@@ -208,7 +215,7 @@ fn update_task_state(task_id: &str, phase_override: Option<&str>, title_override
         art_pres.insert("VERIFY.md".to_string(), Value::Bool(false));
         art_pres.insert("SHIP.md".to_string(), Value::Bool(false));
         map.insert("artifact_presence".to_string(), Value::Object(art_pres));
-        
+
         map.insert("verify_status".to_string(), Value::Null);
         map.insert("findings_count".to_string(), Value::Number(0.into()));
         map.insert("ship_ready".to_string(), Value::Null);
@@ -334,7 +341,6 @@ fn get_git_commit_sha() -> Option<String> {
     }
     None
 }
-
 
 fn resolve_task(args: &[String]) -> CflowResult<String> {
     let task = get_arg(args, "--task", "current");
@@ -954,61 +960,572 @@ where
     }
 }
 
-fn run_agent(prompt: &str) -> CflowResult<String> {
-    let cmd = env::var("CFLOW_AGENT_CMD").unwrap_or_else(|_| "codex exec".to_string());
+#[derive(Clone, Copy)]
+enum AgentPhase {
+    Plan,
+    Coding,
+}
 
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    if parts.is_empty() {
+impl AgentPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            AgentPhase::Plan => "plan",
+            AgentPhase::Coding => "coding",
+        }
+    }
+
+    fn schema_path(self) -> &'static str {
+        match self {
+            AgentPhase::Plan => "schemas/plan.schema.json",
+            AgentPhase::Coding => "schemas/coding.schema.json",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PromptMode {
+    Arg,
+    Stdin,
+}
+
+impl PromptMode {
+    fn parse(value: Option<&str>) -> CflowResult<Self> {
+        match value.unwrap_or("arg") {
+            "arg" => Ok(PromptMode::Arg),
+            "stdin" => Ok(PromptMode::Stdin),
+            other => Err(format!(
+                "Invalid prompt_mode '{}'. Expected 'arg' or 'stdin'.",
+                other
+            )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            PromptMode::Arg => "arg",
+            PromptMode::Stdin => "stdin",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct AgentCommand {
+    cmd: String,
+    args: Vec<String>,
+    prompt_mode: PromptMode,
+    source: String,
+}
+
+struct AgentRunOutput {
+    stdout: String,
+    stderr: String,
+}
+
+const AGENT_PROVIDERS: &[&str] = &["codex", "claude", "gemini", "antigravity", "custom"];
+
+fn load_agent_config() -> CflowResult<Option<toml::Value>> {
+    let path = ".coding/agent.toml";
+    if !Path::new(path).exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    content
+        .parse::<toml::Value>()
+        .map(Some)
+        .map_err(|error| format!("Invalid {}: {}", path, error))
+}
+
+fn normalize_agent_provider(provider: &str) -> CflowResult<String> {
+    let provider = provider.trim().to_lowercase();
+    if provider.is_empty() {
+        return Err("Agent provider is empty".to_string());
+    }
+    if AGENT_PROVIDERS.contains(&provider.as_str()) {
+        Ok(provider)
+    } else {
+        Err(format!(
+            "Unknown agent provider '{}'. Expected one of: {}",
+            provider,
+            AGENT_PROVIDERS.join(", ")
+        ))
+    }
+}
+
+fn config_default_provider(config: Option<&toml::Value>) -> Option<String> {
+    config?
+        .get("default_provider")?
+        .as_str()
+        .map(|value| value.to_string())
+}
+
+fn resolve_agent_provider(args: &[String], config: Option<&toml::Value>) -> CflowResult<String> {
+    let cli_provider = get_arg(args, "--provider", "");
+    if !cli_provider.is_empty() {
+        return normalize_agent_provider(&cli_provider);
+    }
+
+    if let Ok(provider) = env::var("CFLOW_AGENT_PROVIDER") {
+        if !provider.trim().is_empty() {
+            return normalize_agent_provider(&provider);
+        }
+    }
+
+    if let Some(provider) = config_default_provider(config) {
+        if !provider.trim().is_empty() {
+            return normalize_agent_provider(&provider);
+        }
+    }
+
+    Ok("codex".to_string())
+}
+
+fn inline_schema_arg(phase: AgentPhase) -> CflowResult<String> {
+    fs::read_to_string(phase.schema_path())
+        .map_err(|error| format!("Failed to read {}: {}", phase.schema_path(), error))
+}
+
+fn builtin_agent_command(provider: &str, phase: AgentPhase) -> CflowResult<Option<AgentCommand>> {
+    let command = match (provider, phase) {
+        ("codex", AgentPhase::Plan) => AgentCommand {
+            cmd: "codex".to_string(),
+            args: vec![
+                "exec".to_string(),
+                "--ephemeral".to_string(),
+                "--output-schema".to_string(),
+                "schemas/plan.schema.json".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            source: "built-in codex default".to_string(),
+        },
+        ("codex", AgentPhase::Coding) => AgentCommand {
+            cmd: "codex".to_string(),
+            args: vec![
+                "exec".to_string(),
+                "--ephemeral".to_string(),
+                "--sandbox".to_string(),
+                "workspace-write".to_string(),
+                "--output-schema".to_string(),
+                "schemas/coding.schema.json".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            source: "built-in codex default".to_string(),
+        },
+        ("claude", AgentPhase::Plan) => AgentCommand {
+            cmd: "claude".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "--permission-mode".to_string(),
+                "plan".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+                "--json-schema".to_string(),
+                inline_schema_arg(phase)?,
+            ],
+            prompt_mode: PromptMode::Arg,
+            source: "built-in claude default".to_string(),
+        },
+        ("claude", AgentPhase::Coding) => AgentCommand {
+            cmd: "claude".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "--permission-mode".to_string(),
+                "acceptEdits".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+                "--json-schema".to_string(),
+                inline_schema_arg(phase)?,
+            ],
+            prompt_mode: PromptMode::Arg,
+            source: "built-in claude default".to_string(),
+        },
+        ("gemini", AgentPhase::Plan) | ("gemini", AgentPhase::Coding) => AgentCommand {
+            cmd: "gemini".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            source: "built-in gemini default".to_string(),
+        },
+        ("antigravity", _) | ("custom", _) => return Ok(None),
+        _ => return Ok(None),
+    };
+
+    Ok(Some(command))
+}
+
+fn config_agent_command(
+    config: Option<&toml::Value>,
+    provider: &str,
+    phase: AgentPhase,
+) -> CflowResult<Option<AgentCommand>> {
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let Some(table) = config
+        .get("providers")
+        .and_then(|providers| providers.get(provider))
+        .and_then(|provider_cfg| provider_cfg.get(phase.as_str()))
+    else {
+        return Ok(None);
+    };
+
+    let cmd = table
+        .get("cmd")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            format!(
+                ".coding/agent.toml providers.{}.{}.cmd is required",
+                provider,
+                phase.as_str()
+            )
+        })?
+        .to_string();
+
+    let args = match table.get("args") {
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| {
+                format!(
+                    ".coding/agent.toml providers.{}.{}.args must be an array",
+                    provider,
+                    phase.as_str()
+                )
+            })?
+            .iter()
+            .map(|item| {
+                item.as_str().map(|s| s.to_string()).ok_or_else(|| {
+                    format!(
+                        ".coding/agent.toml providers.{}.{}.args must contain only strings",
+                        provider,
+                        phase.as_str()
+                    )
+                })
+            })
+            .collect::<CflowResult<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    let prompt_mode = PromptMode::parse(table.get("prompt_mode").and_then(|value| value.as_str()))?;
+
+    Ok(Some(AgentCommand {
+        cmd,
+        args,
+        prompt_mode,
+        source: format!(
+            ".coding/agent.toml providers.{}.{}",
+            provider,
+            phase.as_str()
+        ),
+    }))
+}
+
+fn env_agent_command() -> CflowResult<Option<AgentCommand>> {
+    let Ok(cmdline) = env::var("CFLOW_AGENT_CMD") else {
+        return Ok(None);
+    };
+    if cmdline.trim().is_empty() {
         return Err("CFLOW_AGENT_CMD is empty".to_string());
     }
 
-    let mut command = Command::new(parts[0]);
-    command.args(&parts[1..]);
+    let parts = shell_words::split(&cmdline)
+        .map_err(|error| format!("Invalid CFLOW_AGENT_CMD: {}", error))?;
+    let Some((cmd, args)) = parts.split_first() else {
+        return Err("CFLOW_AGENT_CMD is empty".to_string());
+    };
 
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::inherit());
+    Ok(Some(AgentCommand {
+        cmd: cmd.to_string(),
+        args: args.to_vec(),
+        prompt_mode: PromptMode::Arg,
+        source: "CFLOW_AGENT_CMD".to_string(),
+    }))
+}
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Failed to start agent command '{}': {}", cmd, e))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin
-            .write_all(prompt.as_bytes())
-            .map_err(|e| e.to_string())?;
-    }
-
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
+fn resolve_agent_command(
+    provider: &str,
+    phase: AgentPhase,
+    config: Option<&toml::Value>,
+) -> CflowResult<AgentCommand> {
+    if provider == "custom" {
+        if let Some(command) = env_agent_command()? {
+            return Ok(command);
+        }
+        if let Some(command) = config_agent_command(config, provider, phase)? {
+            return Ok(command);
+        }
         return Err(format!(
-            "Agent command failed with exit code: {:?}",
-            output.status.code()
+            "Provider 'custom' needs CFLOW_AGENT_CMD or .coding/agent.toml providers.custom.{}",
+            phase.as_str()
         ));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    if let Some(command) = config_agent_command(config, provider, phase)? {
+        return Ok(command);
+    }
+
+    if let Some(command) = builtin_agent_command(provider, phase)? {
+        return Ok(command);
+    }
+
+    Err(format!(
+        "Provider '{}' is not configured for {}. Add .coding/agent.toml providers.{}.{} or use --provider custom.",
+        provider,
+        phase.as_str(),
+        provider,
+        phase.as_str()
+    ))
 }
 
-fn agent_json_payload(stdout: &str) -> &str {
-    let json_str = stdout.trim();
-    if json_str.contains("```json") {
-        json_str
-            .split("```json")
-            .nth(1)
-            .unwrap_or(json_str)
-            .split("```")
-            .next()
-            .unwrap_or(json_str)
-            .trim()
+fn command_exists(cmd: &str) -> bool {
+    let cmd_path = Path::new(cmd);
+    if cmd_path.components().count() > 1 {
+        return cmd_path.exists();
+    }
+
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+
+    env::split_paths(&paths).any(|dir| dir.join(cmd).exists())
+}
+
+fn display_arg(arg: &str) -> String {
+    if arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./:=@".contains(c))
+    {
+        arg.to_string()
     } else {
-        json_str
+        format!("'{}'", arg.replace('\'', "'\\''"))
     }
 }
 
+fn display_command(command: &AgentCommand) -> String {
+    std::iter::once(display_arg(&command.cmd))
+        .chain(command.args.iter().map(|arg| display_arg(arg)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn run_agent(
+    command_cfg: &AgentCommand,
+    prompt: &str,
+    verbose: bool,
+) -> CflowResult<AgentRunOutput> {
+    let mut command = Command::new(&command_cfg.cmd);
+    command.args(&command_cfg.args);
+
+    match command_cfg.prompt_mode {
+        PromptMode::Arg => {
+            command.arg(prompt);
+            command.stdin(Stdio::null());
+        }
+        PromptMode::Stdin => {
+            command.stdin(Stdio::piped());
+        }
+    }
+
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "Failed to start agent command '{}': {}",
+            display_command(command_cfg),
+            error
+        )
+    })?;
+
+    if command_cfg.prompt_mode == PromptMode::Stdin {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin
+                .write_all(prompt.as_bytes())
+                .map_err(|error| error.to_string())?;
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if verbose {
+        eprintln!("Agent command: {}", display_command(command_cfg));
+        eprintln!("Agent prompt_mode: {}", command_cfg.prompt_mode.as_str());
+        eprintln!("Agent stdout:\n{}", stdout);
+        eprintln!("Agent stderr:\n{}", stderr);
+    }
+
+    if !output.status.success() {
+        let mut message = format!(
+            "Agent command failed with exit code: {:?}",
+            output.status.code()
+        );
+        if verbose {
+            message.push_str(&format!("\nstdout:\n{}\nstderr:\n{}", stdout, stderr));
+        } else {
+            message.push_str(". Re-run with --verbose to see captured stdout/stderr.");
+        }
+        return Err(message);
+    }
+
+    Ok(AgentRunOutput { stdout, stderr })
+}
+
+fn fenced_json_payload(stdout: &str) -> Option<String> {
+    let json_str = stdout.trim();
+    if json_str.contains("```json") {
+        Some(
+            json_str
+                .split("```json")
+                .nth(1)
+                .unwrap_or(json_str)
+                .split("```")
+                .next()
+                .unwrap_or(json_str)
+                .trim()
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
+fn looks_like_cflow_agent_json(data: &Value) -> bool {
+    data.get("objective").is_some() || data.get("mode").is_some()
+}
+
+fn collect_wrapper_text(data: &Value, out: &mut Vec<String>) {
+    match data {
+        Value::String(value) => out.push(value.clone()),
+        Value::Array(items) => {
+            for item in items {
+                collect_wrapper_text(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for key in ["message", "content", "text", "result", "output", "final"] {
+                if let Some(value) = map.get(key) {
+                    collect_wrapper_text(value, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn balanced_json_object(input: &str) -> Option<String> {
+    let mut start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut last = None;
+
+    for (idx, ch) in input.char_indices() {
+        if start.is_none() {
+            if ch == '{' {
+                start = Some(idx);
+                depth = 1;
+            }
+            continue;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let begin = start.unwrap_or(0);
+                    last = Some(input[begin..=idx].to_string());
+                    start = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    last
+}
+
+fn agent_json_payload(stdout: &str) -> Option<String> {
+    if let Some(payload) = fenced_json_payload(stdout) {
+        return Some(payload);
+    }
+
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(data) = serde_json::from_str::<Value>(trimmed) {
+        if looks_like_cflow_agent_json(&data) {
+            return Some(trimmed.to_string());
+        }
+
+        let mut text_values = Vec::new();
+        collect_wrapper_text(&data, &mut text_values);
+        for value in text_values.into_iter().rev() {
+            if let Some(payload) = agent_json_payload(&value) {
+                return Some(payload);
+            }
+        }
+
+        return Some(trimmed.to_string());
+    }
+
+    balanced_json_object(trimmed)
+}
+
+fn parse_agent_json(output: &AgentRunOutput, verbose: bool) -> CflowResult<Value> {
+    let Some(json_str) = agent_json_payload(&output.stdout) else {
+        let mut message = "Agent stdout did not contain JSON".to_string();
+        if verbose {
+            message.push_str(&format!(
+                "\nstdout:\n{}\nstderr:\n{}",
+                output.stdout, output.stderr
+            ));
+        } else {
+            message.push_str(". Re-run with --verbose to see captured stdout/stderr.");
+        }
+        return Err(message);
+    };
+
+    serde_json::from_str(&json_str).map_err(|error| {
+        let mut message = format!("Agent output is not valid JSON: {}", error);
+        if verbose {
+            message.push_str(&format!(
+                "\nExtracted output:\n{}\nstdout:\n{}\nstderr:\n{}",
+                json_str, output.stdout, output.stderr
+            ));
+        } else {
+            message.push_str(". Re-run with --verbose to see captured stdout/stderr.");
+        }
+        message
+    })
+}
+
 fn command_agent_plan(args: &[String]) -> CflowResult<()> {
+    let config = load_agent_config()?;
+    let provider = resolve_agent_provider(args, config.as_ref())?;
+    let command_cfg = resolve_agent_command(&provider, AgentPhase::Plan, config.as_ref())?;
+    let verbose = has_flag(args, "--verbose");
     let task_path = resolve_task(args)?;
     let request_path = format!("{}/REQUEST.md", task_path);
     if !Path::new(&request_path).exists() {
@@ -1022,18 +1539,14 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
     let skill_path = "skills/agent-plan.md";
     let skill = fs::read_to_string(skill_path).unwrap_or_else(|_| "Provide JSON plan.".to_string());
 
-    let prompt = format!("{}\n\n# Current REQUEST.md\n\n{}", skill, request_md);
+    let prompt = format!(
+        "{}\n\n# Provider Safety\n\n- Do not edit files during planning.\n- Return plan JSON only.\n\n# Current REQUEST.md\n\n{}",
+        skill, request_md
+    );
 
-    let stdout = run_agent(&prompt)?;
+    let output = run_agent(&command_cfg, &prompt, verbose)?;
 
-    let json_str = agent_json_payload(&stdout);
-
-    let data: Value = serde_json::from_str(json_str).map_err(|e| {
-        format!(
-            "Agent output is not valid JSON: {}\nOutput was:\n{}",
-            e, stdout
-        )
-    })?;
+    let data = parse_agent_json(&output, verbose)?;
 
     validate_plan(&data)?;
     let output_path = format!("{}/PLAN.md", task_path);
@@ -1052,6 +1565,7 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
         .unwrap_or(0);
 
     println!("Plan created: {}", output_path);
+    println!("Provider: {}", provider);
     println!("Implementation steps: {}", steps_len);
     println!("Files expected: {}", files_len);
     println!("Next: cflow agent coding --task current");
@@ -1060,6 +1574,10 @@ fn command_agent_plan(args: &[String]) -> CflowResult<()> {
 }
 
 fn command_agent_coding(args: &[String]) -> CflowResult<()> {
+    let config = load_agent_config()?;
+    let provider = resolve_agent_provider(args, config.as_ref())?;
+    let command_cfg = resolve_agent_command(&provider, AgentPhase::Coding, config.as_ref())?;
+    let verbose = has_flag(args, "--verbose");
     let task_path = resolve_task(args)?;
     let plan_path = format!("{}/PLAN.md", task_path);
     if !Path::new(&plan_path).exists() {
@@ -1099,19 +1617,14 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
             existing_coding_md.as_deref().unwrap_or("_None_")
         )
     } else {
-        format!("{skill}\n\n# Mode\n\ninitial\n\n# Current PLAN.md\n\n{plan_md}")
+        format!(
+            "{skill}\n\n# Mode\n\ninitial\n\n# Coding Instructions\n\n- Return coding JSON only.\n- Do not edit {task_path}/*.md artifacts.\n- Do not verify.\n- Do not ship.\n- Do not commit.\n\n# Current PLAN.md\n\n{plan_md}"
+        )
     };
 
-    let stdout = run_agent(&prompt)?;
+    let output = run_agent(&command_cfg, &prompt, verbose)?;
 
-    let json_str = agent_json_payload(&stdout);
-
-    let data: Value = serde_json::from_str(json_str).map_err(|e| {
-        format!(
-            "Agent output is not valid JSON: {}\nOutput was:\n{}",
-            e, stdout
-        )
-    })?;
+    let data = parse_agent_json(&output, verbose)?;
 
     validate_coding_for_task(&data, &task_path)?;
     let output_path = format!("{}/CODING.md", task_path);
@@ -1133,11 +1646,13 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
 
     if fix_mode {
         println!("Coding fix completed: {}", output_path);
+        println!("Provider: {}", provider);
         println!("Mode: {}", mode);
         println!("Fixed findings: {}", fixed_len);
         println!("Status: {}", status);
     } else {
         println!("Coding completed: {}", output_path);
+        println!("Provider: {}", provider);
         println!("Mode: {}", mode);
         println!("Status: {}", status);
         println!("Changed files: {}", files_len);
@@ -1147,14 +1662,93 @@ fn command_agent_coding(args: &[String]) -> CflowResult<()> {
     Ok(())
 }
 
+fn command_agent_providers() -> CflowResult<()> {
+    let config = load_agent_config()?;
+    let default_provider = resolve_agent_provider(&[], config.as_ref())?;
+
+    println!("Default provider: {}", default_provider);
+    println!("Providers:");
+
+    for provider in AGENT_PROVIDERS {
+        let plan = resolve_agent_command(provider, AgentPhase::Plan, config.as_ref()).ok();
+        let coding = resolve_agent_command(provider, AgentPhase::Coding, config.as_ref()).ok();
+        let plan_status = plan
+            .as_ref()
+            .map(|command| {
+                if command_exists(&command.cmd) {
+                    "exists"
+                } else {
+                    "missing"
+                }
+            })
+            .unwrap_or("unconfigured");
+        let coding_status = coding
+            .as_ref()
+            .map(|command| {
+                if command_exists(&command.cmd) {
+                    "exists"
+                } else {
+                    "missing"
+                }
+            })
+            .unwrap_or("unconfigured");
+
+        println!(
+            "- {}: plan={}, coding={}",
+            provider, plan_status, coding_status
+        );
+    }
+
+    Ok(())
+}
+
+fn command_agent_doctor(args: &[String]) -> CflowResult<()> {
+    let config = load_agent_config()?;
+    let provider = if get_arg(args, "--provider", "").is_empty() {
+        resolve_agent_provider(args, config.as_ref())?
+    } else {
+        normalize_agent_provider(&get_arg(args, "--provider", ""))?
+    };
+
+    println!("Provider: {}", provider);
+    for phase in [AgentPhase::Plan, AgentPhase::Coding] {
+        match resolve_agent_command(&provider, phase, config.as_ref()) {
+            Ok(command) => {
+                println!("{}:", phase.as_str());
+                println!("  source: {}", command.source);
+                println!("  command: {}", display_command(&command));
+                println!("  prompt_mode: {}", command.prompt_mode.as_str());
+                println!(
+                    "  binary: {}",
+                    if command_exists(&command.cmd) {
+                        "exists"
+                    } else {
+                        "missing"
+                    }
+                );
+            }
+            Err(error) => {
+                println!("{}: unconfigured ({})", phase.as_str(), error);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn command_agent(args: &[String]) -> CflowResult<()> {
     if args.is_empty() {
-        return Err("Usage: cflow agent plan|coding [--task current] [--fix]".to_string());
+        return Err(
+            "Usage: cflow agent plan|coding [--task current] [--provider name] [--fix] [--verbose]"
+                .to_string(),
+        );
     }
 
     match args[0].as_str() {
         "plan" => command_agent_plan(&args[1..]),
         "coding" => command_agent_coding(&args[1..]),
+        "providers" => command_agent_providers(),
+        "doctor" => command_agent_doctor(&args[1..]),
         _ => Err(format!("Unknown agent command: {}", args[0])),
     }
 }
@@ -1398,7 +1992,7 @@ fn command_ship(args: &[String]) -> CflowResult<()> {
 fn command_status() {
     let state = load_state();
     let current_task_id = state["current_task_id"].as_str().unwrap_or("");
-    
+
     if current_task_id.is_empty() {
         if Path::new(".coding/current").exists() {
             println!("Warning: .coding/current exists but state.json is missing or lacks current_task_id.");
@@ -1416,7 +2010,10 @@ fn command_status() {
     let task_meta = match state["tasks"].get(current_task_id) {
         Some(m) => m,
         None => {
-            println!("Warning: Task metadata for '{}' not found in state.json.", current_task_id);
+            println!(
+                "Warning: Task metadata for '{}' not found in state.json.",
+                current_task_id
+            );
             println!("Suggest running `cflow state repair`.");
             return;
         }
@@ -1425,7 +2022,10 @@ fn command_status() {
     println!("Title: {}", option_to_js_string(task_meta.get("title")));
     println!("Phase: {}", option_to_js_string(task_meta.get("phase")));
     println!("Status: {}", option_to_js_string(task_meta.get("status")));
-    println!("Next Action: {}", option_to_js_string(task_meta.get("next_action")));
+    println!(
+        "Next Action: {}",
+        option_to_js_string(task_meta.get("next_action"))
+    );
 
     println!();
     println!("Artifacts:");
@@ -1435,7 +2035,8 @@ fn command_status() {
     for file in files {
         let file_path = format!("{}/{}", task_path, file);
         let fs_exists = Path::new(&file_path).exists();
-        let state_exists = task_meta["artifact_presence"].get(file)
+        let state_exists = task_meta["artifact_presence"]
+            .get(file)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -1454,10 +2055,12 @@ fn command_status() {
             .unwrap_or_else(|| "unknown".to_string());
         let fs_findings = verify_findings_count(&content);
 
-        let state_status = task_meta.get("verify_status")
+        let state_status = task_meta
+            .get("verify_status")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let state_findings = task_meta.get("findings_count")
+        let state_findings = task_meta
+            .get("findings_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
@@ -1470,7 +2073,8 @@ fn command_status() {
         println!("- Status: {}", fs_status);
         println!("- Findings: {}", fs_findings);
     } else {
-        let state_has_verify = task_meta["artifact_presence"].get("VERIFY.md")
+        let state_has_verify = task_meta["artifact_presence"]
+            .get("VERIFY.md")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if state_has_verify {
@@ -1494,7 +2098,9 @@ fn command_status() {
 
     if disagree {
         println!();
-        println!("Warning: State file and filesystem disagree. Suggest running `cflow state repair`.");
+        println!(
+            "Warning: State file and filesystem disagree. Suggest running `cflow state repair`."
+        );
     }
 }
 
@@ -1516,12 +2122,19 @@ fn command_tasks() -> CflowResult<()> {
 
     println!("Known tasks:");
     for (task_id, meta) in tasks {
-        let is_current = if task_id == current_task_id { "* " } else { "  " };
+        let is_current = if task_id == current_task_id {
+            "* "
+        } else {
+            "  "
+        };
         let title = meta.get("title").and_then(|v| v.as_str()).unwrap_or("");
         let phase = meta.get("phase").and_then(|v| v.as_str()).unwrap_or("");
         let status = meta.get("status").and_then(|v| v.as_str()).unwrap_or("");
-        let updated_at = meta.get("updated_at").and_then(|v| v.as_str()).unwrap_or("");
-        
+        let updated_at = meta
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
         println!(
             "{}{} - {} (phase: {}, status: {}, updated: {})",
             is_current, task_id, title, phase, status, updated_at
@@ -1545,7 +2158,10 @@ fn command_switch(args: &[String]) -> CflowResult<()> {
             update_task_state(&task_id, None, None)?;
             state = load_state();
         } else {
-            return Err(format!("Task '{}' not found in state or filesystem.", task_id));
+            return Err(format!(
+                "Task '{}' not found in state or filesystem.",
+                task_id
+            ));
         }
     }
 
@@ -1560,7 +2176,7 @@ fn command_switch(args: &[String]) -> CflowResult<()> {
 
 fn command_state_repair() -> CflowResult<()> {
     println!("Repairing state.json from .coding/tasks/* ...");
-    
+
     let tasks_dir = ".coding/tasks";
     if !Path::new(tasks_dir).exists() {
         println!("No tasks folder found at {}", tasks_dir);
@@ -1594,23 +2210,25 @@ fn command_state_repair() -> CflowResult<()> {
 
     let mut state = load_state();
     let current_task_id = state["current_task_id"].as_str().map(String::from);
-    
+
     if current_task_id.is_none() || !task_ids.contains(current_task_id.as_ref().unwrap()) {
         let mut fallback_id = None;
         if Path::new(".coding/current").exists() {
             if let Ok(current_content) = fs::read_to_string(".coding/current") {
                 let current_content = current_content.trim();
-                let id = current_content.strip_prefix("tasks/").unwrap_or(current_content);
+                let id = current_content
+                    .strip_prefix("tasks/")
+                    .unwrap_or(current_content);
                 if task_ids.contains(&id.to_string()) {
                     fallback_id = Some(id.to_string());
                 }
             }
         }
-        
+
         if fallback_id.is_none() {
             fallback_id = task_ids.last().cloned();
         }
-        
+
         if let Some(id) = fallback_id {
             println!("Setting current_task_id to: {}", id);
             state["current_task_id"] = Value::String(id);
@@ -1783,8 +2401,10 @@ fn print_usage() {
   cflow request [--task current] [--input file]
   cflow plan    [--task current] [--input file]
   cflow coding  [--task current] [--input file]
-  cflow agent plan   [--task current]
-  cflow agent coding [--task current] [--fix]
+  cflow agent plan   [--task current] [--provider name] [--verbose]
+  cflow agent coding [--task current] [--provider name] [--fix] [--verbose]
+  cflow agent providers
+  cflow agent doctor [--provider name]
   cflow verify  [--task current] [--input file]
   cflow ship    [--task current] [--input file] [--dry-run|--commit]
   cflow status
@@ -1950,5 +2570,80 @@ mod tests {
         let verify = "# Verify\n\n## Status\n\npassed\n\n## Findings\n\n- _None_\n";
 
         assert_eq!(verify_findings_count(verify), 0);
+    }
+
+    #[test]
+    fn cli_provider_overrides_config_default() {
+        let config = r#"default_provider = "claude""#
+            .parse::<toml::Value>()
+            .expect("config should parse");
+        let args = vec!["--provider".to_string(), "gemini".to_string()];
+
+        assert_eq!(
+            resolve_agent_provider(&args, Some(&config)).expect("provider should resolve"),
+            "gemini"
+        );
+    }
+
+    #[test]
+    fn reads_custom_provider_phase_config() {
+        let config = r#"
+[providers.custom.plan]
+cmd = "my-agent"
+args = ["--json"]
+prompt_mode = "stdin"
+"#
+        .parse::<toml::Value>()
+        .expect("config should parse");
+
+        let command = config_agent_command(Some(&config), "custom", AgentPhase::Plan)
+            .expect("config lookup should succeed")
+            .expect("command should exist");
+
+        assert_eq!(command.cmd, "my-agent");
+        assert_eq!(command.args, vec!["--json"]);
+        assert_eq!(command.prompt_mode, PromptMode::Stdin);
+    }
+
+    #[test]
+    fn extracts_json_from_claude_style_wrapper_text() {
+        let stdout = r#"{
+  "type": "message",
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"mode\":\"initial\",\"status\":\"ready_for_verify\",\"summary\":[],\"fixed_findings\":[],\"changed_files\":[],\"notes\":[],\"next\":\"verify\"}"
+    }
+  ]
+}"#;
+
+        let payload = agent_json_payload(stdout).expect("payload should be extracted");
+        let data: Value = serde_json::from_str(&payload).expect("payload should parse");
+
+        assert_eq!(data["mode"], "initial");
+    }
+
+    #[test]
+    fn extracts_last_json_object_from_stdout() {
+        let stdout = r#"progress {"ignored":true}
+{"mode":"initial","status":"ready_for_verify","summary":[],"fixed_findings":[],"changed_files":[],"notes":[],"next":"verify"}"#;
+
+        let payload = agent_json_payload(stdout).expect("payload should be extracted");
+        let data: Value = serde_json::from_str(&payload).expect("payload should parse");
+
+        assert_eq!(data["mode"], "initial");
+    }
+
+    #[test]
+    fn built_in_codex_coding_uses_schema_and_arg_prompt_mode() {
+        let command = builtin_agent_command("codex", AgentPhase::Coding)
+            .expect("builtin should resolve")
+            .expect("command should exist");
+
+        assert_eq!(command.cmd, "codex");
+        assert_eq!(command.prompt_mode, PromptMode::Arg);
+        assert!(command
+            .args
+            .contains(&"schemas/coding.schema.json".to_string()));
     }
 }
