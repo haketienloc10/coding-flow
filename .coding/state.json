@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "current_task_id": "20260602-230656-prune-unused-schemas-and-templates",
+  "current_task_id": "20260602-231730-align-agents-request-command-with-skill",
   "current_packet_id": null,
   "current_story_id": null,
   "tasks": {
@@ -83,6 +83,29 @@
       "type": "maintenance",
       "lane": "tiny",
       "summary": "Prune unused schema and template files by keeping only agent output schemas and moving packet markdown rendering fully into Rust code.",
+      "artifact_presence": {
+        "REQUEST.md": true,
+        "PLAN.md": true,
+        "CODING.md": true,
+        "VERIFY.md": true,
+        "SHIP.md": true
+      },
+      "verify_status": "passed",
+      "findings_count": 0,
+      "ship_ready": true,
+      "committed": false,
+      "commit_sha": null
+    },
+    "20260602-231730-align-agents-request-command-with-skill": {
+      "title": "align agents request command with skill",
+      "status": "ready_for_verify",
+      "phase": "commit_pending",
+      "next_action": "verify",
+      "created_at": "2026-06-02T23:17:30.664876730+07:00",
+      "updated_at": "2026-06-02T23:30:36.608527401+07:00",
+      "type": "documentation",
+      "lane": "tiny",
+      "summary": "Update AGENTS.md request command examples to pipe inline JSON via stdin using the same pattern as skills/request.md instead of referencing request.json files.",
       "artifact_presence": {
         "REQUEST.md": true,
         "PLAN.md": true,

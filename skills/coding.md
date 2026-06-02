@@ -17,7 +17,7 @@ Process coding JSON and render CODING.md.
 ## Rules
 
 - Do not create `.coding/*.json` files.
-- Pass JSON via stdin or using a transient file with `--input`.
+- Pass JSON via stdin heredoc.
 - Keep JSON output transient.
 - The artifact will be `.coding/tasks/<task-id>/CODING.md`.
 

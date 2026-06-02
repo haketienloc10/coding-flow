@@ -121,6 +121,8 @@ tiny: request -> agent plan -> agent coding -> verify -> fix loop -> ship
 packet: packet new -> request -> packet intake -> packet brief -> packet split -> story loop (agent plan -> agent coding -> verify -> fix loop -> ship) -> packet verify -> packet ship
 ```
 
+Phase commands that are not `agent ...` require JSON via stdin heredoc using the matching file in `skills/`. Do not create persistent phase JSON files.
+
 ## Unified State Model
 
 - `.coding/state.json` is the canonical workflow state for current task, current packet, current story, and metadata.
@@ -133,32 +135,32 @@ packet: packet new -> request -> packet intake -> packet brief -> packet split -
 
 Dùng cho task nhỏ độc lập. Tiny Flow dùng `request`; không chạy `packet intake`.
 - `bin/cflow new "<task-name>"`
-- `cat request.json | bin/cflow request --task current`
+- Run request using `skills/request.md`.
 - `bin/cflow agent plan --task current`
 - `bin/cflow agent coding --task current`
-- `cat verify.json | bin/cflow verify --task current`
-- `cat ship.json | bin/cflow ship --task current --dry-run`
+- Run verify using `skills/verify.md`.
+- Run ship using `skills/ship.md`.
 
-Phase commands that are not `agent ...` require JSON via stdin or `--input file`.
+Use stdin heredoc only for phase JSON.
 
 ### 2. Packet Flow
 
 Dùng cho thay đổi trung bình/lớn/nguy cơ cao. Packet Flow tạo `REQUEST.md` trong current packet trước `packet intake`.
 - `bin/cflow packet new "<title>"`
-- `cat request.json | bin/cflow request --task current`
-- `cat intake.json | bin/cflow packet intake --packet current`
-- `cat packet.json | bin/cflow packet brief --packet current`
-- `cat stories.json | bin/cflow packet split --packet current`
+- Run request using `skills/request.md`.
+- Run packet intake using `skills/intake.md`.
+- Run packet brief using `skills/packet-brief.md`.
+- Run packet split using `skills/packet-split.md`.
 - `bin/cflow story list`
 - `bin/cflow story switch <story-id>`
 - `bin/cflow story agent plan --story current`
 - `bin/cflow story agent coding --story current`
-- `cat verify.json | bin/cflow story verify --story current`
-- `cat ship.json | bin/cflow story ship --story current --dry-run`
-- `cat packet_verify.json | bin/cflow packet verify --packet current`
-- `cat packet_ship.json | bin/cflow packet ship --packet current --dry-run`
+- Run story verify using `skills/verify.md`.
+- Run story ship using `skills/ship.md`.
+- Run packet verify using `skills/packet-verify.md`.
+- Run packet ship using `skills/packet-ship.md`.
 
-Phase commands that are not `agent ...` require JSON via stdin or `--input file`.
+Use stdin heredoc only for phase JSON.
 
 ## Story and Packet Granularity
 
@@ -169,10 +171,10 @@ Packets are execution or handoff bundles. A packet may contain multiple stories 
 Preferred packet flow for new normal/high_risk work:
 
 - `bin/cflow packet new "<title>"`
-- `cat request.json | bin/cflow request --task current`
-- `cat intake.json | bin/cflow packet intake --packet current`
-- `cat packet.json | bin/cflow packet brief --packet current`
-- `cat stories.json | bin/cflow packet split --packet current`
+- Run request using `skills/request.md`.
+- Run packet intake using `skills/intake.md`.
+- Run packet brief using `skills/packet-brief.md`.
+- Run packet split using `skills/packet-split.md`.
 
 Legacy task-bundling flow:
 

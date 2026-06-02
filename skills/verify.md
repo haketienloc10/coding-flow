@@ -13,7 +13,7 @@
 
 ## Usage
 
-Pipe JSON directly into the CLI via stdin:
+For Tiny Flow, pipe JSON directly into the CLI via stdin:
 
 ```bash
 cat <<'JSON' | cflow verify --task current
@@ -29,4 +29,20 @@ cat <<'JSON' | cflow verify --task current
 JSON
 ```
 
-The CLI will validate and render `.coding/tasks/<task-id>/VERIFY.md`. Do not create or edit markdown artifacts yourself.
+For Story Flow, use the story command:
+
+```bash
+cat <<'JSON' | cflow story verify --story current
+{
+  "status": "failed",
+  "checks": [],
+  "manual_checks": [],
+  "acceptance_criteria_checked": [],
+  "findings": [],
+  "known_issues": [],
+  "done_criteria_verified": []
+}
+JSON
+```
+
+The CLI will validate and render `VERIFY.md`. Do not create or edit markdown artifacts yourself.
