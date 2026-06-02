@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Intake Schema",
+  "type": "object",
+  "required": ["request_summary", "input_type", "lane", "next_action"],
+  "properties": {
+    "request_summary": { "type": "string" },
+    "input_type": {
+      "type": "string",
+      "enum": [
+        "new_spec", "spec_slice", "change_request", "new_feature", "bug_fix",
+        "refactor", "maintenance", "workflow_improvement", "documentation",
+        "test_only", "question", "unclear"
+      ]
+    },
+    "lane": {
+      "type": "string",
+      "enum": ["tiny", "normal", "high_risk", "needs_clarification", "none"]
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "hard_gates": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "split_required": { "type": "boolean" },
+    "reason": { "type": "string" },
+    "next_action": {
+      "type": "string",
+      "enum": [
+        "answer_directly", "clarify", "task_flow", "packet_brief", "packet_split", "story_flow", "none"
+      ]
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "clarifying_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

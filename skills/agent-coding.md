@@ -15,7 +15,7 @@ requires:
 
 ## Purpose
 
-Implement the current task according to PLAN.md, or fix only findings from VERIFY.md when `--fix` is used.
+Implement the current task or story according to PLAN.md, or fix only findings from VERIFY.md when `--fix` is used.
 
 ## Initial Mode
 
@@ -23,13 +23,14 @@ Used by:
 
 ```bash
 cflow agent coding --task current
+cflow story agent coding --story current
 ```
 
 Rules:
 
-- Read PLAN.md.
+- Read PLAN.md (and STORY.md, PACKET.md in story mode).
 - Implement the code changes described in the plan.
-- Do not edit REQUEST.md.
+- Do not edit REQUEST.md, STORY.md, PACKET.md.
 - Do not edit PLAN.md.
 - Do not edit CODING.md.
 - Do not edit VERIFY.md.
@@ -49,18 +50,19 @@ Used by:
 
 ```bash
 cflow agent coding --task current --fix
+cflow story agent coding --story current --fix
 ```
 
 Rules:
 
-- Read PLAN.md.
+- Read PLAN.md (and STORY.md, PACKET.md in story mode).
 - Read VERIFY.md.
 - Read CODING.md if present.
 - Fix only unresolved findings from VERIFY.md.
 - Do not expand scope.
 - Do not rewrite unrelated code.
 - Do not re-plan.
-- Do not edit REQUEST.md.
+- Do not edit REQUEST.md, STORY.md, PACKET.md.
 - Do not edit PLAN.md.
 - Do not edit CODING.md.
 - Do not edit VERIFY.md.

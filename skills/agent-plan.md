@@ -13,16 +13,17 @@ requires:
 
 ## Purpose
 
-Create a 9-section code plan from the current task's REQUEST.md.
+Create a 9-section code plan from the current task's REQUEST.md (or STORY.md in story mode).
 
 ## Rules
 
-- Read REQUEST.md.
+- Read REQUEST.md (or STORY.md, REQUEST.md, INTAKE.md, PACKET.md in story mode).
 - Do not edit code.
 - Do not edit markdown artifacts.
 - Do not create JSON files.
 - Return valid JSON only.
 - cflow will validate and render PLAN.md.
+
 
 ## Required plan sections
 

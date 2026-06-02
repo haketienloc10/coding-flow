@@ -1,0 +1,3 @@
+# Stories
+
+{{stories_list}}

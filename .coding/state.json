@@ -1,144 +1,93 @@
 {
-  "version": "1",
-  "current_task_id": "20260602-100049-fix-codex-prompt-separator",
+  "version": 2,
+  "current_task_id": "20260602-113918-implement-packet-workflow",
+  "current_packet_id": "20260602-113855-time-capsule-notes",
+  "current_story_id": "S02-create-form",
   "tasks": {
-    "20260602-091042-time-capsule-notes": {
-      "title": "time-capsule-notes",
-      "status": "ready_for_verify",
-      "phase": "verify_passed",
-      "next_action": "verify",
-      "created_at": "2026-06-02T09:22:52.857355746+07:00",
-      "updated_at": "2026-06-02T09:22:52.857449695+07:00",
-      "type": "new_feature",
-      "lane": "tiny",
-      "summary": "Add a lightweight copy button to code blocks in documentation pages.",
+    "20260602-113855-time-capsule-notes": {
+      "title": "20260602-113855-time-capsule-notes",
+      "status": "todo",
+      "phase": "requested",
+      "next_action": "plan",
+      "created_at": "2026-06-02T11:38:59.230013951+07:00",
+      "updated_at": "2026-06-02T11:38:59.230077189+07:00",
+      "type": "",
+      "lane": "",
+      "summary": "",
       "artifact_presence": {
-        "REQUEST.md": true,
-        "PLAN.md": true,
-        "CODING.md": true,
-        "VERIFY.md": true,
+        "REQUEST.md": false,
+        "PLAN.md": false,
+        "CODING.md": false,
+        "VERIFY.md": false,
         "SHIP.md": false
       },
-      "verify_status": "passed",
+      "verify_status": null,
       "findings_count": 0,
       "ship_ready": null,
       "committed": false,
       "commit_sha": null
     },
-    "20260602-092035-add-lightweight-persistent-state-file": {
-      "title": "add-lightweight-persistent-state-file",
+    "20260602-113918-implement-packet-workflow": {
+      "title": "implement-packet-workflow",
       "status": "ready_for_verify",
+      "phase": "commit_pending",
+      "next_action": "verify",
+      "created_at": "2026-06-02T11:39:18.732510066+07:00",
+      "updated_at": "2026-06-02T11:39:35.432299437+07:00",
+      "type": "new_feature",
+      "lane": "normal",
+      "summary": "implement theo yêu cầu US-update-packet-workflow.md",
+      "artifact_presence": {
+        "REQUEST.md": true,
+        "PLAN.md": true,
+        "CODING.md": true,
+        "VERIFY.md": true,
+        "SHIP.md": true
+      },
+      "verify_status": "passed",
+      "findings_count": 0,
+      "ship_ready": "true",
+      "committed": false,
+      "commit_sha": null
+    }
+  },
+  "packets": {
+    "20260602-113855-time-capsule-notes": {
+      "title": "time capsule notes",
+      "status": "done",
       "phase": "committed",
-      "next_action": "verify",
-      "created_at": "2026-06-02T09:22:52.857565892+07:00",
-      "updated_at": "2026-06-02T09:25:00.045389196+07:00",
-      "type": "new_feature",
       "lane": "normal",
-      "summary": "Add a lightweight persistent state file to cflow.",
-      "artifact_presence": {
-        "REQUEST.md": true,
-        "PLAN.md": true,
-        "CODING.md": true,
-        "VERIFY.md": true,
-        "SHIP.md": true
+      "split_required": true,
+      "risk_flags": [
+        "existing_behavior",
+        "weak_proof"
+      ],
+      "hard_gates": [],
+      "next_action": "packet_split",
+      "created_at": "2026-06-02T11:38:55.361407098+07:00",
+      "updated_at": "2026-06-02T11:39:14.747215408+07:00",
+      "artifacts": {
+        "request": true,
+        "intake": true,
+        "packet": true,
+        "stories": true,
+        "packet_verify": true,
+        "packet_ship": true
       },
-      "verify_status": "passed",
-      "findings_count": 0,
-      "ship_ready": "true",
-      "committed": true,
-      "commit_sha": "c79d4cb85f0b4ca224e3197e8b06026a794b7fa7"
-    },
-    "20260602-093556-multi-agent-provider-cli": {
-      "title": "multi-agent-provider-cli",
-      "status": "ready_for_verify",
-      "phase": "commit_pending",
-      "next_action": "verify",
-      "created_at": "2026-06-02T09:35:56.285880160+07:00",
-      "updated_at": "2026-06-02T09:43:17.262954045+07:00",
-      "type": "new_feature",
-      "lane": "normal",
-      "summary": "Upgrade cflow Rust CLI to support multiple agent providers instead of hardcoded Codex.",
-      "artifact_presence": {
-        "REQUEST.md": true,
-        "PLAN.md": true,
-        "CODING.md": true,
-        "VERIFY.md": true,
-        "SHIP.md": true
-      },
-      "verify_status": "passed",
-      "findings_count": 0,
-      "ship_ready": "true",
-      "committed": false,
-      "commit_sha": null
-    },
-    "20260602-094723-enforce-agent-coding-flow-rules": {
-      "title": "enforce-agent-coding-flow-rules",
-      "status": "ready_for_verify",
-      "phase": "verify_passed",
-      "next_action": "verify",
-      "created_at": "2026-06-02T09:47:23.638451435+07:00",
-      "updated_at": "2026-06-02T09:47:57.575549912+07:00",
-      "type": "documentation",
-      "lane": "tiny",
-      "summary": "Add explicit AGENTS.md rules requiring agent coding for non-trivial implementation and defining manual fallback conditions.",
-      "artifact_presence": {
-        "REQUEST.md": true,
-        "PLAN.md": true,
-        "CODING.md": true,
-        "VERIFY.md": true,
-        "SHIP.md": false
-      },
-      "verify_status": "passed",
-      "findings_count": 0,
-      "ship_ready": null,
-      "committed": false,
-      "commit_sha": null
-    },
-    "20260602-095330-add-antigravity-provider": {
-      "title": "add-antigravity-provider",
-      "status": "ready_for_verify",
-      "phase": "commit_pending",
-      "next_action": "verify",
-      "created_at": "2026-06-02T09:53:30.906410854+07:00",
-      "updated_at": "2026-06-02T09:56:46.574117258+07:00",
-      "type": "new_feature",
-      "lane": "normal",
-      "summary": "Add first-class Antigravity agent provider using agy --prompt for planning and coding",
-      "artifact_presence": {
-        "REQUEST.md": true,
-        "PLAN.md": true,
-        "CODING.md": true,
-        "VERIFY.md": true,
-        "SHIP.md": true
-      },
-      "verify_status": "passed",
-      "findings_count": 0,
-      "ship_ready": "true",
-      "committed": false,
-      "commit_sha": null
-    },
-    "20260602-100049-fix-codex-prompt-separator": {
-      "title": "fix-codex-prompt-separator",
-      "status": "ready_for_verify",
-      "phase": "commit_pending",
-      "next_action": "verify",
-      "created_at": "2026-06-02T10:00:49.738244035+07:00",
-      "updated_at": "2026-06-02T10:02:05.375547011+07:00",
-      "type": "bug_fix",
-      "lane": "normal",
-      "summary": "Fix built-in Codex provider prompt parsing by adding -- before arg-mode prompt",
-      "artifact_presence": {
-        "REQUEST.md": true,
-        "PLAN.md": true,
-        "CODING.md": true,
-        "VERIFY.md": true,
-        "SHIP.md": true
-      },
-      "verify_status": "passed",
-      "findings_count": 0,
-      "ship_ready": "true",
-      "committed": false,
-      "commit_sha": null
+      "stories": {
+        "S01-storage": {
+          "title": "Storage and data model",
+          "status": "in_progress",
+          "phase": "verify_passed",
+          "findings_count": 0
+        },
+        "S02-create-form": {
+          "title": "Create capsule form",
+          "status": "in_progress",
+          "phase": "verify_passed",
+          "findings_count": 0
+        }
+      }
     }
   }
 }

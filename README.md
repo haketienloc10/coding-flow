@@ -2,71 +2,52 @@
 
 Bộ workflow mỏng nhẹ cho coding task:
 
-## Recommended flow
+## Tiny Flow (Task Flow)
 
+Dùng cho task nhỏ hoặc story-level.
 ```bash
-bin/cflow new "focus garden"
-
-cat <<'JSON' | bin/cflow request --task current
-{
-  "summary": "Build Focus Garden MVP",
-  "type": "new_feature",
-  "planning_needed": true,
-  "lane": "normal",
-  "risk_flags": [],
-  "hard_gates": [],
-  "assumptions": [],
-  "clarifying_questions": [],
-  "next_action": "plan"
-}
-JSON
-
-bin/cflow agent plan --task current --provider codex
-bin/cflow agent coding --task current --provider codex
-
-cat <<'JSON' | bin/cflow verify --task current
-{
-  "status": "passed",
-  "checks": [],
-  "manual_checks": ["Start/cancel/complete/reload tested"],
-  "acceptance_criteria_checked": ["Garden persists after reload"],
-  "findings": [],
-  "known_issues": [],
-  "done_criteria_verified": ["Garden persists after reload"]
-}
-JSON
-
-cat <<'JSON' | bin/cflow ship --task current --dry-run
-{
-  "ready": true,
-  "commit": {
-    "type": "feat",
-    "scope": "focus-garden",
-    "message": "add focus garden mvp",
-    "body": []
-  },
-  "changed_files": [],
-  "summary": ["Added focus session timer and garden history"],
-  "verification": {
-    "status": "passed",
-    "source": ".coding/tasks/current/VERIFY.md"
-  },
-  "notes": []
-}
-JSON
-```
-
-## Manual fallback flow
-
-```bash
-bin/cflow new "focus garden"
-
+bin/cflow new "rename button"
 cat request.json | bin/cflow request --task current
-cat plan.json | bin/cflow plan --task current
-cat coding.json | bin/cflow coding --task current
-cat verify.json | bin/cflow verify --task current
-cat ship.json | bin/cflow ship --task current --dry-run
+bin/cflow agent plan --task current
+bin/cflow agent coding --task current
+bin/cflow verify --task current
+bin/cflow ship --task current --dry-run
 ```
+
+## Packet Flow
+
+Dùng cho thay đổi trung bình/lớn/nguy cơ cao.
+```bash
+# Tạo packet
+bin/cflow packet new "time capsule notes"
+
+# Intake để phân tích rủi ro & phân lane
+cat intake.json | bin/cflow packet intake --packet current
+
+# Tạo brief cho packet
+cat brief.json | bin/cflow packet brief --packet current
+
+# Chia nhỏ thành các stories
+cat split.json | bin/cflow packet split --packet current
+
+# Xem danh sách stories
+bin/cflow story list
+
+# Switch sang story đầu tiên để implement
+bin/cflow story switch S01-storage
+bin/cflow story agent plan --story current
+bin/cflow story agent coding --story current
+bin/cflow story verify --story current
+bin/cflow story ship --story current --dry-run
+
+# Switch sang story tiếp theo...
+# ...
+
+# Verify và Ship toàn bộ packet
+cat packet_verify.json | bin/cflow packet verify --packet current
+cat packet_ship.json | bin/cflow packet ship --packet current --dry-run
+```
+
 
 ## Quy tắc bắt buộc (Important Rules)
 
