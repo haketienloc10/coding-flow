@@ -259,7 +259,7 @@ Agents should record a decision when choosing between multiple implementation ap
 
 ## Cài đặt nhanh
 
-Từ folder `coding-flow-v0`:
+Từ folder `coding-flow`:
 
 ```bash
 cargo install --path .

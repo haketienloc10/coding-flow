@@ -82,7 +82,7 @@ A decision must capture context, decision, options considered, tradeoffs, conseq
 ## Core Flow
 
 ```text
-request -> intake -> packet -> stories -> story loop (plan -> coding -> verify -> fix loop -> ship) -> packet verify -> packet ship
+request -> intake -> packet -> stories -> story loop (agent plan -> agent coding -> verify -> fix loop -> ship) -> packet verify -> packet ship
 ```
 
 ### 1. Tiny Flow

@@ -97,3 +97,35 @@ state repair now syncs packet/story artifacts and .coding/current so story comma
 
 ### Supersedes
 None
+
+## D-0004: Reject CLI-only provenance guard for P006
+
+Status: rejected
+Date: 2026-06-02
+Agent: codex
+Related Problems: P006
+
+### Context
+P006 requires preventing an agent from starting manual implementation before running story agent coding.
+
+### Decision
+Reject the CLI-only provenance guard proposal because it cannot directly stop main-context source edits before the agent invokes story agent coding.
+
+### Options Considered
+- CLI provenance guard
+- Pre-implementation agent-mode enforcement
+
+### Tradeoffs
+Pros:
+- Documents provenance
+- Can catch late invalid manual artifacts
+
+Cons:
+- Does not prevent manual source edits before CLI artifact write
+- Still wastes tokens if agent starts manual implementation
+
+### Consequences
+A replacement proposal must enforce agent-first behavior before source edits begin, not only at story coding, verify, or ship time.
+
+### Supersedes
+None

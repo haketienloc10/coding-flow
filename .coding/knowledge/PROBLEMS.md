@@ -207,6 +207,11 @@ For future implementation stories, run cflow story agent coding --story current 
 
 - `.coding/packets/20260602-132403-add-decision-tradeoff-workflow/stories/S01-decision-workflow/CODING.md`
 
+### Update
+
+Repeated for S03-main-module-extraction-plan: implementation used story plan/coding in the main context instead of story agent plan/coding. Future stories must attempt story agent coding first and record fallback before manual implementation.
+
+Updated at: 2026-06-02T16:41:40.373636622+07:00
 ## P007 - cflow command is not on PATH
 
 Status: open  
