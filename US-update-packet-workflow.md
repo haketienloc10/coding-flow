@@ -786,8 +786,8 @@ Update:
 README.md
 AGENTS.md
 skills/*
-templates/*
-schemas/*
+schemas/plan.schema.json
+schemas/coding.schema.json
 ```
 
 ## README cần có 2 flow

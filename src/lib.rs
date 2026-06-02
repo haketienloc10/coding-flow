@@ -3259,14 +3259,6 @@ fn render_story_md(story: &Value) -> String {
     )
 }
 
-fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
-    let mut output = template.to_string();
-    for (key, value) in replacements {
-        output = output.replace(&format!("{{{{{key}}}}}"), value);
-    }
-    output
-}
-
 fn validate_packet_verify(data: &Value) -> CflowResult<()> {
     require_field(get_path(data, &["status"]), "status")?;
     assert_allowed(get_path(data, &["status"]), &["passed", "failed"], "status")?;
@@ -3274,33 +3266,20 @@ fn validate_packet_verify(data: &Value) -> CflowResult<()> {
 }
 
 fn render_packet_verify(data: &Value) -> String {
-    render_template(
-        include_str!("../templates/packet_verify.md"),
-        &[
-            ("status", option_to_js_string(get_path(data, &["status"]))),
-            (
-                "goal_achieved",
-                option_to_js_string(get_path(data, &["goal_achieved"])),
-            ),
-            (
-                "regressions_checked",
-                option_to_js_string(get_path(data, &["regressions_checked"])),
-            ),
-            ("findings", list(get_path(data, &["findings"]))),
-        ],
+    format!(
+        "# Packet Verify\n\n## Status\n\n{}\n\n## Goal Achieved\n\n{}\n\n## Regressions Checked\n\n{}\n\n## Findings\n\n{}\n",
+        option_to_js_string(get_path(data, &["status"])),
+        option_to_js_string(get_path(data, &["goal_achieved"])),
+        option_to_js_string(get_path(data, &["regressions_checked"])),
+        list(get_path(data, &["findings"]))
     )
 }
 
 fn render_packet_ship(data: &Value) -> String {
-    render_template(
-        include_str!("../templates/packet_ship.md"),
-        &[
-            ("changelog", list(get_path(data, &["changelog"]))),
-            (
-                "commit_message",
-                option_to_js_string(get_path(data, &["commit_message"])),
-            ),
-        ],
+    format!(
+        "# Packet Ship\n\n## Status\n\nshipped\n\n## Changelog\n\n{}\n\n## Commit Message\n\n```text\n{}\n```\n",
+        list(get_path(data, &["changelog"])),
+        option_to_js_string(get_path(data, &["commit_message"]))
     )
 }
 

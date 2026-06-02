@@ -1,3 +1,0 @@
-# Stories
-
-{{stories_list}}

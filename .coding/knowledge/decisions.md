@@ -229,3 +229,36 @@ Future fixture changes should update test helper functions in src/lib.rs rather 
 
 ### Supersedes
 None
+
+## D-0008: Keep only agent schemas and inline markdown renderers
+
+Status: proposed
+Date: 2026-06-02
+Agent: codex
+Related Problems: None
+
+### Context
+The repository had JSON schemas and Markdown templates that were not used by the CLI, while most validation and rendering already lived in Rust code.
+
+### Decision
+Keep schemas/plan.schema.json and schemas/coding.schema.json for agent structured output, inline packet verify/ship rendering in Rust, and remove the templates directory plus unused schema files.
+
+### Options Considered
+- Keep all schemas and templates
+- remove only unused files
+- move all rendering to Rust and keep only agent schemas
+
+### Tradeoffs
+Pros:
+- Removes dead repository files
+- prevents schema/template drift
+- and makes rendering ownership consistent.
+
+Cons:
+- Packet verify/ship templates are no longer editable as standalone Markdown files.
+
+### Consequences
+Future Markdown artifact format changes should update Rust render functions and tests; future schemas should be added only when a CLI command actually reads them.
+
+### Supersedes
+None
